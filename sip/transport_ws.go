@@ -365,8 +365,8 @@ func (c *WSConnection) Ref(i int) int {
 
 func (c *WSConnection) Close() error {
 	c.mu.Lock()
-	c.refcount = 0
 	c.closed = true
+	// See UDPConnection.close: the reference count survives a forced close.
 	c.mu.Unlock()
 	DefaultLogger().Debug("WS doing hard close", "ip", c.RemoteAddr().String())
 	return c.Conn.Close()
@@ -376,6 +376,8 @@ func (c *WSConnection) TryClose() (int, error) {
 	c.mu.Lock()
 	c.refcount--
 	ref := c.refcount
+	// see UDPConnection.TryClose about `already`
+	already := c.closed
 	if ref <= 0 {
 		c.closed = true
 	}
@@ -389,6 +391,13 @@ func (c *WSConnection) TryClose() (int, error) {
 		DefaultLogger().Warn("WS ref went negative", "ip", c.RemoteAddr().String(), "ref", ref)
 		return 0, nil
 	}
+	if already {
+		// The socket is already gone: the transport was shut down while
+		// owners still held references. Releasing the last one is not a
+		// reason to close a descriptor twice.
+		return ref, nil
+	}
+
 	DefaultLogger().Debug("WS closing", "ip", c.RemoteAddr().String(), "ref", ref)
 	return ref, c.Conn.Close()
 }

@@ -295,8 +295,8 @@ func (c *TCPConnection) Ref(i int) int {
 
 func (c *TCPConnection) Close() error {
 	c.mu.Lock()
-	c.refcount = 0
 	c.closed = true
+	// See UDPConnection.close: the reference count survives a forced close.
 	c.mu.Unlock()
 	DefaultLogger().Debug("TCP doing hard close", "ip", c.LocalAddr().String(), "dst", c.RemoteAddr().String(), "ref", 0)
 	return c.Conn.Close()
@@ -306,6 +306,8 @@ func (c *TCPConnection) TryClose() (int, error) {
 	c.mu.Lock()
 	c.refcount--
 	ref := c.refcount
+	// see UDPConnection.TryClose about `already`
+	already := c.closed
 	if ref <= 0 {
 		c.closed = true
 	}
@@ -318,6 +320,13 @@ func (c *TCPConnection) TryClose() (int, error) {
 	if ref < 0 {
 		DefaultLogger().Warn("TCP ref went negative", "ip", c.LocalAddr().String(), "dst", c.RemoteAddr().String(), "ref", ref)
 		return 0, nil
+	}
+
+	if already {
+		// The socket is already gone: the transport was shut down while
+		// owners still held references. Releasing the last one is not a
+		// reason to close a descriptor twice.
+		return ref, nil
 	}
 
 	DefaultLogger().Debug("TCP closing", "ip", c.LocalAddr().String(), "dst", c.RemoteAddr().String(), "ref", ref)

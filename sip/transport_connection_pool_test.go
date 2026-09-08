@@ -206,3 +206,50 @@ func TestConnectionPoolKeepsListenerWithLiveReference(t *testing.T) {
 		t.Fatal("pool dropped a listener its owner still holds")
 	}
 }
+
+// A forced close leaves the reference count alone, so the releases that
+// follow it do not run below zero.
+//
+// The pool force closes every connection when the transport shuts down
+// (connectionPool.Clear), and the reader of a dialed connection releases its
+// references afterwards — the idle one and its own. Zeroing the count inside
+// close() made those releases land at -1 and -2, and "ref went negative"
+// then fired on the ordinary shutdown path of every process that had dialed
+// anything. That warning is meant to report broken accounting, so it must
+// not fire where the accounting is fine.
+func TestForcedCloseKeepsReferenceCount(t *testing.T) {
+	pool := newConnectionPool()
+	fake := &fakes.UDPConn{
+		LAddr: net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 5060},
+		RAddr: net.UDPAddr{IP: net.ParseIP("127.0.0.2"), Port: 5060},
+	}
+	// as created by TransportUDP.createConnection: one reference for the
+	// caller, one for the reader, one to keep it idle in the pool
+	conn := &UDPConnection{
+		PacketConn: fake, PacketAddr: fake.LAddr.String(),
+		refcount: 2 + TransportIdleConnection,
+	}
+	pool.Add(fake.RAddr.String(), conn)
+
+	// the caller lets go, then the transport shuts down and forces the close
+	if ref, err := conn.TryClose(); err != nil || ref != 1+TransportIdleConnection {
+		t.Fatalf("release by the caller: ref=%d err=%v", ref, err)
+	}
+	// the fake socket has no real descriptor, so its own Close reports
+	// "invalid argument"; what matters here is the bookkeeping around it
+	_ = pool.Clear()
+	if !conn.Closed() {
+		t.Fatal("forced close did not mark the connection closed")
+	}
+
+	// the reader wakes on the closed socket and gives back what it holds
+	if ref := conn.Ref(-TransportIdleConnection); ref != 1 {
+		t.Fatalf("after the idle reference is released ref=%d, want 1", ref)
+	}
+	if err := pool.CloseAndDelete(conn, fake.RAddr.String()); err != nil {
+		t.Fatalf("closing an already closed connection must be a no-op: %v", err)
+	}
+	if ref := conn.Ref(0); ref != 0 {
+		t.Errorf("reference count = %d after the shutdown path, want 0", ref)
+	}
+}
