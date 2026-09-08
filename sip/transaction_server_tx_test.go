@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -201,4 +202,44 @@ func TestServerTransactionReleasesConnRef(t *testing.T) {
 	<-tx.Done()
 
 	require.Equal(t, 1, conn.Ref(0), "Terminate must release exactly one connection reference")
+}
+
+// RFC 3261 8.2.6.2: "The same tag MUST be used for all responses to that
+// request, both final and provisional". The 487 the transaction sends on
+// CANCEL is built from the request, which carries no tag of its own —
+// the dialog layer keeps the prebuilt tag on its own clone
+// (dialog_ua.go) — so NewResponseFromRequest used to invent a second
+// tag. A UAC that tracks the early dialog cannot match such a response.
+func TestServerTransactionCancelKeepsToTag(t *testing.T) {
+	req, _, _ := testCreateInvite(t, "sip:127.0.0.99:5060", "udp", "127.0.0.2:5060")
+
+	incoming := bytes.NewBuffer([]byte{})
+	outgoing := bytes.NewBuffer([]byte{})
+	conn := &UDPConnection{
+		PacketConn: &fakes.UDPConn{
+			Reader:  incoming,
+			Writers: map[string]io.Writer{"127.0.0.2:5060": outgoing},
+		},
+	}
+	tx := NewServerTx("123", req, conn, slog.Default())
+	require.NoError(t, tx.Init())
+
+	const tag = "dialog-tag-of-this-uas"
+	ringing := NewResponseFromRequest(req, StatusRinging, "Ringing", nil)
+	ringing.To().Params.Add("tag", tag)
+	require.NoError(t, tx.Respond(ringing))
+
+	cancelReq := NewRequest(CANCEL, req.Recipient)
+	cancelReq.AppendHeader(HeaderClone(req.Via()))
+	cancelReq.AppendHeader(HeaderClone(req.From()))
+	cancelReq.AppendHeader(HeaderClone(req.To()))
+	cancelReq.AppendHeader(HeaderClone(req.CallID()))
+	require.NoError(t, tx.Receive(cancelReq))
+
+	sent := outgoing.String()
+	_, final, ok := strings.Cut(sent, "SIP/2.0 487")
+	require.True(t, ok, "487 was not sent:\n%s", sent)
+	require.Contains(t, final, "tag="+tag,
+		"487 carries a tag of its own while the transaction already answered with %q:\n%s",
+		tag, final)
 }
