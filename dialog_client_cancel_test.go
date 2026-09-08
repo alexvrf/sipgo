@@ -73,3 +73,64 @@ func TestDialogClientCancelCarriesHeaders(t *testing.T) {
 	}
 	<-answered
 }
+
+// A cancelled INVITE leaves its client transaction to finish on its own.
+//
+// RFC 3261 17.1.1.2 keeps a client INVITE transaction in Completed for
+// Timer D after a 300-699 so it can ACK retransmissions of that response.
+// Terminating the transaction as soon as WaitAnswer returned took that away:
+// a UAS that gets no ACK keeps resending its final response until its own
+// Timer H, and with no transaction to match, none of those retransmissions
+// is answered.
+func TestDialogClientCancelKeepsTransactionForRetransmits(t *testing.T) {
+	invites := make(chan *sip.Request, 1)
+	inviteTx := make(chan *siptest.ClientTxResponder, 1)
+	client := testClientResponder(t, func(req *sip.Request, w *siptest.ClientTxResponder) {
+		switch req.Method {
+		case sip.INVITE:
+			invites <- req
+			inviteTx <- w
+			w.Receive(sip.NewResponseFromRequest(req, 180, "Ringing", nil))
+		case sip.CANCEL:
+			w.Receive(sip.NewResponseFromRequest(req, 200, "OK", nil))
+			// the UAS answers the cancelled INVITE, as RFC 3261 9.2 asks
+			(<-inviteTx).Receive(sip.NewResponseFromRequest(<-invites, 487, "Request Terminated", nil))
+		}
+	})
+
+	invite := sip.NewRequest(sip.INVITE, sip.Uri{User: "test", Host: "uas.example.com"})
+	invite.AppendHeader(sip.NewHeader("Contact", "<sip:uac@uac.example.com>"))
+	require.NoError(t, clientRequestBuildReq(client, invite))
+
+	ua := &DialogUA{
+		Client:     client,
+		ContactHDR: sip.ContactHeader{Address: sip.Uri{User: "uac", Host: "uac.example.com"}},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	dialog, err := ua.WriteInvite(ctx, invite)
+	require.NoError(t, err)
+
+	answered := make(chan error, 1)
+	go func() {
+		answered <- dialog.WaitAnswer(ctx, AnswerOptions{
+			OnResponse: func(res *sip.Response) error {
+				if res.StatusCode == 180 {
+					cancel()
+				}
+				return nil
+			},
+		})
+	}()
+	select {
+	case <-answered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("WaitAnswer did not return after the cancellation")
+	}
+
+	select {
+	case <-dialog.inviteTx.Done():
+		t.Fatal("the client transaction was terminated: a retransmitted final response would go unanswered")
+	default:
+	}
+}

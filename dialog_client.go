@@ -302,7 +302,16 @@ func (s *DialogClientSession) WaitAnswer(ctx context.Context, opts AnswerOptions
 			// https://datatracker.ietf.org/doc/html/rfc3261#section-9.1
 			// Cancel can only be sent when provisional is received
 			// We will wait until transaction timeous out (TimerB)
-			defer tx.Terminate()
+			//
+			// The transaction is left to finish on its own. Terminating it
+			// here took away the only thing that answers a retransmitted
+			// final response: RFC 3261 17.1.1.2 keeps a client INVITE
+			// transaction in Completed for Timer D so it can ACK the
+			// retransmissions, and a UAS that gets no ACK keeps resending
+			// its 4xx-6xx until its own Timer H. Without a transaction to
+			// match, those retransmissions reach nobody and stay unanswered
+			// for 32 seconds — visible on the wire as a final response
+			// repeating five times with no ACK from us.
 			return s.inviteCancel(ctx, tx, opts.CancelHeaders)
 		case <-tx.Done():
 			// tx.Err() can be empty
