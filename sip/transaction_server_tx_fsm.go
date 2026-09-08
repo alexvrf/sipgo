@@ -301,7 +301,17 @@ func (tx *ServerTx) actCancel() fsmInput {
 	}
 
 	tx.log.Debug("Passing 487 on CANCEL", "tx", tx.Key())
-	tx.fsmResp = NewResponseFromRequest(tx.origin, StatusRequestTerminated, "Request Terminated", nil)
+	res := NewResponseFromRequest(tx.origin, StatusRequestTerminated, "Request Terminated", nil)
+	// 8.2.6.2: "The same tag MUST be used for all responses to that
+	// request, both final and provisional". The request itself has no
+	// tag here, so NewResponseFromRequest generated a fresh one; replace
+	// it with the tag this transaction has already answered with.
+	if tag := tx.sentToTag(); tag != "" {
+		if to := res.To(); to != nil {
+			to.Params.Add("tag", tag)
+		}
+	}
+	tx.fsmResp = res
 	tx.fsmErr = ErrTransactionCanceled // For now only informative
 
 	// Check is there some listener on cancel

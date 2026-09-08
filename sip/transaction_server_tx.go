@@ -21,6 +21,12 @@ type ServerTx struct {
 	timer_1xx    *time.Timer
 	timer_l      *time.Timer
 	reliable     bool
+	// toTag is the To tag of the last response sent for this request.
+	// A 487 built inside the transaction must carry the same one:
+	// RFC 3261 8.2.6.2 wants a single tag in every response to a
+	// request, and tx.origin carries none of its own — the dialog layer
+	// keeps the tag on its own clone of the request (dialog_ua.go).
+	toTag string
 }
 
 func NewServerTx(key string, origin *Request, conn Connection, logger *slog.Logger) *ServerTx {
@@ -110,6 +116,14 @@ func (tx *ServerTx) Respond(res *Response) error {
 	if tx.timer_1xx != nil {
 		tx.timer_1xx.Stop()
 		tx.timer_1xx = nil
+	}
+	// Remember the tag this UAS answers with, so a final response the
+	// transaction generates on its own (487 on CANCEL) does not invent a
+	// second one.
+	if to := res.To(); to != nil {
+		if tag, ok := to.Params.Get("tag"); ok && tag != "" {
+			tx.toTag = tag
+		}
 	}
 	tx.mu.Unlock()
 
@@ -204,6 +218,13 @@ func (tx *ServerTx) OnCancel(f FnTxCancel) bool {
 	}
 
 	return true
+}
+
+// sentToTag is the To tag already used in responses to this request.
+func (tx *ServerTx) sentToTag() string {
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	return tx.toTag
 }
 
 func (tx *ServerTx) registerOnCancel(f FnTxCancel) {
