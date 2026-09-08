@@ -269,8 +269,12 @@ func (c *UDPConnection) Closed() bool {
 
 func (c *UDPConnection) close() error {
 	c.mu.Lock()
-	c.refcount = 0
 	c.closed = true
+	// The reference count is deliberately left alone. Zeroing it made every
+	// release that follows a forced close (connectionPool.Clear on transport
+	// shutdown) land below zero, so "ref went negative" fired on the ordinary
+	// shutdown path of any process that had dialed a connection — training
+	// everyone to ignore the one warning that reports broken accounting.
 	c.mu.Unlock()
 
 	if c.Listener {
@@ -302,6 +306,9 @@ func (c *UDPConnection) TryClose() (int, error) {
 	c.mu.Lock()
 	c.refcount--
 	ref := c.refcount
+	// already tells a forced close apart from this very release: the flag is
+	// set below too, and asking for it afterwards would always say "closed"
+	already := c.closed
 	if ref <= 0 {
 		c.closed = true
 	}
@@ -324,6 +331,13 @@ func (c *UDPConnection) TryClose() (int, error) {
 	if ref < 0 {
 		DefaultLogger().Warn("UDP ref went negative on try close", "src", c.LocalAddr().String(), "ref", ref)
 		return 0, nil
+	}
+
+	if already {
+		// The socket is already gone: the transport was shut down while
+		// owners still held references. Releasing the last one is not a
+		// reason to close a descriptor twice.
+		return ref, nil
 	}
 
 	return ref, c.close()

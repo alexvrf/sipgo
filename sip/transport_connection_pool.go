@@ -199,6 +199,14 @@ func (p *connectionPool) Clear() error {
 
 	var werr error
 	for _, c := range p.m {
+		// One connection sits in the pool under several keys, so this loop
+		// meets it more than once. Skipping by the closed flag rather than by
+		// a zero reference count: the count no longer drops to zero on a
+		// forced close (see UDPConnection.close), and closing the same
+		// descriptor twice would report an error nobody can act on.
+		if closer, ok := c.(interface{ Closed() bool }); ok && closer.Closed() {
+			continue
+		}
 		if c.Ref(0) <= 0 {
 			continue
 		}
