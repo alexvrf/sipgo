@@ -219,6 +219,18 @@ func (d *DialogClientSession) Invite(ctx context.Context, options ...ClientReque
 type AnswerOptions struct {
 	OnResponse func(res *sip.Response) error
 
+	// CancelHeaders returns headers to append to the CANCEL request that
+	// is sent when the context is canceled. A gateway has to put a Reason
+	// header on that CANCEL (RFC 3326; ITU-T Q.1912.5 7.7.1 requires the
+	// Q.850 cause of the release that triggered it), and the request is
+	// built inside the library, so the caller has no other place to add
+	// it.
+	//
+	// It is called while that request is being built, not when WaitAnswer
+	// is called: the cause of the cancellation is usually known only at
+	// that point.
+	CancelHeaders func() []sip.Header
+
 	// For digest authentication
 	Username string
 	Password string
@@ -258,7 +270,7 @@ func (s *DialogClientSession) WaitAnswer(ctx context.Context, opts AnswerOptions
 			// Cancel can only be sent when provisional is received
 			// We will wait until transaction timeous out (TimerB)
 			defer tx.Terminate()
-			return s.inviteCancel(ctx, tx)
+			return s.inviteCancel(ctx, tx, opts.CancelHeaders)
 		case <-tx.Done():
 			// tx.Err() can be empty
 			return errors.Join(fmt.Errorf("transaction terminated"), tx.Err())
@@ -334,7 +346,7 @@ func (s *DialogClientSession) WaitAnswer(ctx context.Context, opts AnswerOptions
 	return nil
 }
 
-func (s *DialogClientSession) inviteCancel(ctx context.Context, tx sip.ClientTransaction) error {
+func (s *DialogClientSession) inviteCancel(ctx context.Context, tx sip.ClientTransaction, headers func() []sip.Header) error {
 	if err := context.Cause(ctx); err == WaitAnswerForceCancelErr {
 		// In case caller wants to force cancelation exit.
 		return ctx.Err()
@@ -355,6 +367,11 @@ func (s *DialogClientSession) inviteCancel(ctx context.Context, tx sip.ClientTra
 	}
 
 	cancelReq := newCancelRequest(s.InviteRequest)
+	if headers != nil {
+		for _, h := range headers() {
+			cancelReq.AppendHeader(h)
+		}
+	}
 	res, err := s.Do(context.Background(), cancelReq) // Cancel should grab same connection underhood
 	if err != nil {
 		return err
@@ -488,11 +505,11 @@ func newAckRequestUAC(inviteRequest *sip.Request, inviteResponse *sip.Response, 
 	ackRequest.SipVersion = inviteRequest.SipVersion
 
 	// ACK to 2xx response should not copy over Route header(s) from original INVITE request.
-	// Instead the ACK should include Route header(s) derived from reversing the order of 
-	// Record-Route header(s) in the 2xx response. 
+	// Instead the ACK should include Route header(s) derived from reversing the order of
+	// Record-Route header(s) in the 2xx response.
 	// https://datatracker.ietf.org/doc/html/rfc3261#section-12.1.2
 	// https://datatracker.ietf.org/doc/html/rfc3261#section-12.2.1.1
-	
+
 	if h := inviteRequest.From(); h != nil {
 		ackRequest.AppendHeader(sip.HeaderClone(h))
 	}
@@ -553,9 +570,9 @@ func newByeRequestUAC(inviteRequest *sip.Request, inviteResponse *sip.Response, 
 	)
 	byeRequest.SipVersion = inviteRequest.SipVersion
 
-	// For the UAC side, the Route header field(s) in the BYE request are constructed from reversing the order 
+	// For the UAC side, the Route header field(s) in the BYE request are constructed from reversing the order
 	// of Record-Route header field(s) in the dialogue-establishing INVITE response such as a 2xx response.
-	// For the UAS side, the dialog route set is the list of Record-Route header fields from the 
+	// For the UAS side, the dialog route set is the list of Record-Route header fields from the
 	// dialogue-establishing INVITE request, taken in the same order.
 	// https://datatracker.ietf.org/doc/html/rfc3261#section-12.1.1
 	// https://datatracker.ietf.org/doc/html/rfc3261#section-12.1.2
