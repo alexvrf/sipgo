@@ -12,7 +12,7 @@ func TestTorture(t *testing.T) {
 
 	validTests := []string{
 		"dblreq",
-		//"esc01",
+		"esc01",
 		"esc02",
 		"escnull",
 		"intmeth",
@@ -20,10 +20,10 @@ func TestTorture(t *testing.T) {
 		"lwsdisp",
 		"mpart01",
 		"noreason",
-		//"semiuri",
+		"semiuri",
 		"transports",
 		"unreason",
-		//"wsinv",
+		"wsinv",
 	}
 
 	// TODO these should fail with specific error we should validate against
@@ -52,7 +52,8 @@ func TestTorture(t *testing.T) {
 		//"mismatch02",
 		//"multi01",
 		"ncl",
-		"novelsc",
+		// novelsc is valid: "A parser must accept this as a well-formed SIP
+		// request" (RFC 4475 3.3.3); it is checked in rfc4475_test.go.
 		//"quotbal",
 		//"regaut01",
 		//"regbadct",

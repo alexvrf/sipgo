@@ -413,7 +413,13 @@ func split3(s string) (parts [3]string, ok bool) {
 //	INVITE bob@example.com SIP/2.0
 //	REGISTER jane@telco.com SIP/1.0
 func parseRequestLine(parts [3]string, recipient *Uri) (method RequestMethod, sipVersion string, err error) {
-	method = RequestMethod(strings.ToUpper(parts[0]))
+	// Methods are case-sensitive: `INVITEm = %x49.4E.56.49.54.45 ; INVITE
+	// in caps` (RFC 3261 25.1), and CSeq repeats the method as it is (20.16:
+	// "The method part of CSeq is case-sensitive"). Upper-casing it put
+	// `!INTERESTING-METHOD...` in the start line of RFC 4475 3.1.1.2 while
+	// its CSeq kept the original, and turned `invite` into an INVITE the
+	// peer never sent.
+	method = RequestMethod(parts[0])
 	err = ParseUri(parts[1], recipient)
 	sipVersion = parts[2]
 
