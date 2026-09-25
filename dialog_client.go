@@ -594,6 +594,9 @@ func newCancelRequest(inviteRequest *sip.Request) *sip.Request {
 	cancelReq.AppendHeader(sip.HeaderClone(inviteRequest.To()))
 	cancelReq.AppendHeader(sip.HeaderClone(inviteRequest.CallID()))
 	sip.CopyHeaders("Route", inviteRequest, cancelReq)
+	// Same UAC as the INVITE (RFC 3261 20.41): the CANCEL keeps its value
+	// even if the one configured changed while the INVITE was pending.
+	sip.CopyHeaders("User-Agent", inviteRequest, cancelReq)
 	cancelReq.SetSource(inviteRequest.Source())
 	cancelReq.Laddr = inviteRequest.Laddr
 	return cancelReq

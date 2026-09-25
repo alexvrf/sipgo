@@ -258,6 +258,13 @@ func (srv *Server) handleRequest(req *sip.Request, tx *sip.ServerTx) {
 
 // WriteResponse will proxy message to transport layer. Use it in stateless mode
 func (srv *Server) WriteResponse(r *sip.Response) error {
+	// a response written past any transaction is still sent by this UAS
+	// (RFC 3261 20.35), see WithUserAgentHeader
+	if srv.UserAgent != nil && srv.UserAgent.header != nil && r.GetHeader("Server") == nil {
+		if v := srv.UserAgent.header(); v != "" {
+			r.AppendHeader(sip.NewHeader("Server", v))
+		}
+	}
 	return srv.tp.WriteMsg(r)
 }
 

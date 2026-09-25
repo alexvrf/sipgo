@@ -21,6 +21,9 @@ type ServerTx struct {
 	timer_1xx    *time.Timer
 	timer_l      *time.Timer
 	reliable     bool
+	// serverHeader is the layer's Server header value
+	// (WithTransactionLayerServerHeader); nil adds nothing.
+	serverHeader func() string
 }
 
 func NewServerTx(key string, origin *Request, conn Connection, logger *slog.Logger) *ServerTx {
@@ -102,6 +105,7 @@ func (tx *ServerTx) Receive(req *Request) error {
 }
 
 func (tx *ServerTx) Respond(res *Response) error {
+	setServerHeader(res, tx.serverHeader)
 	if res.IsCancel() {
 		return tx.conn.WriteMsg(res)
 	}

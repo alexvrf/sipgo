@@ -29,6 +29,11 @@ type TransactionLayer struct {
 
 	terminateOnConnClose bool
 
+	// serverHeader gives the value of the Server header field for every
+	// response sent on a server transaction of this layer (see
+	// WithTransactionLayerServerHeader).
+	serverHeader func() string
+
 	log *slog.Logger
 }
 
@@ -56,6 +61,34 @@ func WithTransactionLayerUnhandledResponseHandler(f func(r *Response)) Transacti
 func WithTransactionLayerTerminateOnConnClose() TransactionLayerOption {
 	return func(txl *TransactionLayer) {
 		txl.terminateOnConnClose = true
+	}
+}
+
+// WithTransactionLayerServerHeader sets the value of the Server header field
+// (RFC 3261 20.35) added to every response sent on a server transaction:
+// those the TU passes to Respond and those the layer builds on its own —
+// 100 Trying, 487 on CANCEL, 200 on CANCEL, 400 for a malformed request.
+// Without it the latter could never carry the header, since the TU never
+// sees them.
+//
+// The value is asked for on every response, so it may change at run time.
+// An empty value adds nothing, and a Server header the response already has
+// is kept: 20.35 wants the header to be a configurable option, and turning it
+// off is one of the options.
+func WithTransactionLayerServerHeader(value func() string) TransactionLayerOption {
+	return func(txl *TransactionLayer) {
+		txl.serverHeader = value
+	}
+}
+
+// setServerHeader adds the Server header field to res unless it already has
+// one or value gives nothing (WithTransactionLayerServerHeader).
+func setServerHeader(res *Response, value func() string) {
+	if value == nil || res.GetHeader("Server") != nil {
+		return
+	}
+	if v := value(); v != "" {
+		res.AppendHeader(NewHeader("Server", v))
 	}
 }
 
@@ -172,7 +205,9 @@ func (txl *TransactionLayer) handleRequest(req *Request) error {
 			// The CANCEL client transaction retransmits until it receives
 			// a response; sending 200 OK before the 487 ensures the UAC
 			// stops retransmitting immediately.
-			if err := tx.conn.WriteMsg(NewResponseFromRequest(req, StatusOK, "OK", nil)); err != nil {
+			ok := NewResponseFromRequest(req, StatusOK, "OK", nil)
+			setServerHeader(ok, txl.serverHeader)
+			if err := tx.conn.WriteMsg(ok); err != nil {
 				return fmt.Errorf("Failed to respond 200 for CANCEL: %w", err)
 			}
 
@@ -215,6 +250,7 @@ func (txl *TransactionLayer) rejectMalformedRequest(req *Request, reason error) 
 	// Build a minimal 400 response from whatever headers the request has.
 	// NewResponseFromRequest safely skips nil CSeq, From, To, Call-ID.
 	res := NewResponseFromRequest(req, StatusBadRequest, "Bad Request", nil)
+	setServerHeader(res, txl.serverHeader)
 
 	if err := txl.tpl.WriteMsg(res); err != nil {
 		txl.log.Error("Failed to send stateless 400 for malformed request",
@@ -261,6 +297,9 @@ func (txl *TransactionLayer) serverTxRequest(req *Request, key string) error {
 	}
 
 	tx = NewServerTx(key, req, conn, txl.log)
+	// Before Init: an INVITE transaction arms Timer 1xx there, and the
+	// automatic 100 Trying must carry Server too (RFC 3261 20.35).
+	tx.serverHeader = txl.serverHeader
 	if err := tx.Init(); err != nil {
 		txl.serverTransactions.unlock()
 		// Init failed: this tx never reaches delete(), so release the connection
