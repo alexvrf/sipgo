@@ -42,6 +42,10 @@ type TransportLayer struct {
 	connectionReuse bool
 	readFilter      TransportReadFilter
 
+	// unparsed and serverHeader: see WithTransportLayerUnparsedRequest
+	unparsed     func(src string) bool
+	serverHeader func() string
+
 	// dnsPreferSRV does always SRV lookup first
 	dnsPreferSRV bool
 	dnsPreferIP  int // 0 - no preference , 1 -ip4, 2 - ip6
@@ -66,6 +70,23 @@ func WithTransportLayerConnectionReuse(f bool) TransportLayerOption {
 func WithTransportLayerDNSLookupSRV(preferSRV bool) TransportLayerOption {
 	return func(l *TransportLayer) {
 		l.dnsPreferSRV = preferSRV
+	}
+}
+
+// WithTransportLayerUnparsedRequest makes the UDP transport answer a
+// request datagram that does not parse with a stateless 400 (RFC 3261
+// 18.3, RFC 4475 3.1.2), instead of dropping it silently. allow decides per
+// sender, so an application that answers only known peers keeps doing so;
+// server gives the Server header value (RFC 3261 20.35), nil or empty adds
+// none. Without the option nothing changes.
+//
+// Stream transports are not covered: there a framing error loses the
+// message boundary, and the connection has to be closed instead
+// (RFC 4475 3.1.2.3).
+func WithTransportLayerUnparsedRequest(allow func(src string) bool, server func() string) TransportLayerOption {
+	return func(l *TransportLayer) {
+		l.unparsed = allow
+		l.serverHeader = server
 	}
 }
 
@@ -138,6 +159,8 @@ func NewTransportLayer(
 			log:             l.log.With("caller", "Transport<UDP>"),
 			connectionReuse: l.connectionReuse,
 			readFilter:      l.readFilter,
+			unparsed:        l.unparsed,
+			serverHeader:    l.serverHeader,
 		},
 		TCP: &TransportTCP{
 			log:             l.log.With("caller", "Transport<TCP>"),

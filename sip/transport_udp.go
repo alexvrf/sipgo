@@ -24,6 +24,12 @@ type TransportUDP struct {
 	log             *slog.Logger
 	connectionReuse bool
 	readFilter      TransportReadFilter
+
+	// unparsed and serverHeader come from WithTransportLayerUnparsedRequest:
+	// which senders get a stateless 400 for a request that does not parse,
+	// and the Server value it carries.
+	unparsed     func(src string) bool
+	serverHeader func() string
 }
 
 func (t *TransportUDP) init(par *Parser) {
@@ -181,7 +187,9 @@ func (t *TransportUDP) readListenerConnection(conn *UDPConnection, laddr string,
 			acceptedAddr[rastr] = struct{}{}
 		}
 
-		t.parseAndHandle(data, rastr, handler)
+		if err := t.parseAndHandle(data, rastr, handler); err != nil {
+			t.answerUnparsed(conn.PacketConn, raddr, data, err)
+		}
 		lastRaddr = rastr
 	}
 }
@@ -214,26 +222,29 @@ func (t *TransportUDP) readListenerConnection(conn *UDPConnection, laddr string,
 	}
 } */
 
-func (t *TransportUDP) parseAndHandle(data []byte, src string, handler MessageHandler) {
+// parseAndHandle returns the parse error, so the caller can answer the
+// datagram (answerUnparsed); a handled or keep-alive datagram returns nil.
+func (t *TransportUDP) parseAndHandle(data []byte, src string, handler MessageHandler) error {
 	// Check is keep alive
 	if len(data) <= 4 {
 		//One or 2 CRLF
 		if len(bytes.Trim(data, "\r\n")) == 0 {
 			t.log.Debug("Keep alive CRLF received")
-			return
+			return nil
 		}
 	}
 
 	msg, err := t.parser.ParseSIP(data) //Very expensive operation
 	if err != nil {
 		t.log.Error("failed to parse", "data", string(data), "error", err)
-		return
+		return err
 	}
 
 	msg.SetTransport(t.Network())
 	// Current transaction are taking connection but for UDP they can forward on different src address
 	msg.SetSource(src) // By default we expect our source is behind NAT. https://datatracker.ietf.org/doc/html/rfc3581#section-6
 	handler(msg)
+	return nil
 }
 
 type UDPConnection struct {
