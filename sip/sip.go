@@ -108,8 +108,16 @@ func getDialogIDFromMessage(msg Message, callId, toHeaderTag, fromHeaderTag *str
 		return fmt.Errorf("missing To header")
 	}
 
+	// The tag the other side sets may be absent, and then it is null:
+	// "A UAS MUST be prepared to receive a request without a tag in the
+	// From field, in which case the tag is considered to have a value of
+	// null. This is to maintain backwards compatibility with RFC 2543"
+	// (RFC 3261 12.1.1), and the same for a UAC and the To tag of a
+	// response (12.1.2). The tag this side sets is always there — To of a
+	// request, From of a response — and its absence is still an error.
+	_, isResponse := msg.(*Response)
 	toTag, ok := to.Params.Get("tag")
-	if !ok {
+	if !ok && !isResponse {
 		return fmt.Errorf("missing tag param in To header")
 	}
 
@@ -119,7 +127,7 @@ func getDialogIDFromMessage(msg Message, callId, toHeaderTag, fromHeaderTag *str
 	}
 
 	fromTag, ok := from.Params.Get("tag")
-	if !ok {
+	if !ok && isResponse {
 		return fmt.Errorf("missing tag param in From header")
 	}
 	*callId = string(*callID)

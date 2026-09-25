@@ -362,10 +362,13 @@ func makeServerTxKey(msg Message, asMethod RequestMethod) (string, error) {
 	if from == nil {
 		return "", fmt.Errorf("'From' header not found in message '%s'", messageShortString(msg))
 	}
-	fromTag, ok := from.Params.Get("tag")
-	if !ok {
-		return "", fmt.Errorf("'tag' param not found in 'From' header of message '%s'", messageShortString(msg))
-	}
+	// An RFC 2543 request may carry no From tag at all, and then the tag
+	// is null (RFC 3261 12.1.1: "A UAS MUST be prepared to receive a
+	// request without a tag in the From field"). 17.2.3 matches such
+	// requests by the From tag among others — a null one matches a null
+	// one. Rejecting it answered 400 to every RFC 2543 INVITE
+	// (RFC 4475 3.4.1).
+	fromTag, _ := from.Params.Get("tag")
 	callId := msg.CallID()
 	if callId == nil {
 		return "", fmt.Errorf("'Call-ID' header not found in message '%s'", messageShortString(msg))
