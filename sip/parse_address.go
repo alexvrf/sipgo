@@ -135,29 +135,41 @@ func addressStateUri(a *nameAddress, s string) (addressFSM, string, error) {
 
 	for i, c := range s {
 		if c == ';' {
-			err := ParseUri(s[:i], a.uri)
+			err := ParseUri(trimLWS(s[:i]), a.uri)
 			return addressStateHeaderParams, s[i+1:], err
 		}
 	}
 
 	// No header params detected
-	err := ParseUri(s, a.uri)
+	err := ParseUri(trimLWS(s), a.uri)
 	return nil, s, err
+}
+
+// trimLWS drops the whitespace around an addr-spec or a parameter. It
+// belongs to the separators, not to the value: HCOLON ends with SWS and
+// SEMI is `SWS ";" SWS` (RFC 3261 25.1), so `To: sip:a@b.example ;tag=1`
+// is valid (RFC 4475 3.1.1.1).
+func trimLWS(s string) string {
+	return strings.Trim(s, " \t")
 }
 
 func addressStateHeaderParams(a *nameAddress, s string) (addressFSM, string, error) {
 
 	addParam := func(equal int, s string) {
 
+		// EQUAL = SWS "=" SWS and SEMI = SWS ";" SWS (RFC 3261 25.1): the
+		// whitespace belongs to the separators, and kept in the name it lost
+		// the tag of `To: <sip:a@b>; tag = 1` (RFC 4475 3.1.1.1)
 		if equal > 0 {
-			name := s[:equal]
-			val := s[equal+1:]
+			name := trimLWS(s[:equal])
+			val := trimLWS(s[equal+1:])
 			if a.headerParams != nil {
 				a.headerParams.Add(name, val)
 			}
 			return
 		}
 
+		s = trimLWS(s)
 		if len(s) == 0 {
 			// could be just ;
 			return

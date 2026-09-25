@@ -62,10 +62,16 @@ func viaStateProtocolVersion(h *ViaHeader, s string) (viaFSM, int, error) {
 }
 
 func viaStateProtocolTransport(h *ViaHeader, s string) (viaFSM, int, error) {
-	ind := strings.IndexAny(s, " \t")
+	// SLASH is `SWS "/" SWS` (RFC 3261 25.1): whitespace may follow the
+	// slash, as in `SIP / 2.0 / TCP host` (RFC 4475 3.1.1.1). Searching for
+	// the separating LWS from the very start found that whitespace instead
+	// and left the transport empty.
+	lead := len(s) - len(strings.TrimLeft(s, " \t"))
+	ind := strings.IndexAny(s[lead:], " \t")
 	if ind < 0 {
 		return nil, 0, errors.New("Malformed transport in Via header")
 	}
+	ind += lead
 	h.Transport = strings.TrimSpace(s[:ind])
 	return viaStateHost, ind + 1, nil
 }

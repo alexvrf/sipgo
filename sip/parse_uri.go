@@ -53,7 +53,11 @@ func uriStateScheme(uri *Uri, s string) (uriFSM, string, error) {
 			return uriStateSlashes, s[i+1:], nil
 		}
 		// Check is c still ASCII
-		if !isASCII(c) {
+		// scheme = ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ) (RFC 3261
+		// 25.1, RFC 3986 3.1). Letters only rejected registered schemes
+		// such as soap.beep, which a parser must accept (RFC 4475 3.3.3):
+		// the element then answers 416 instead of dropping the request.
+		if !isASCII(c) && (i == 0 || !(c >= '0' && c <= '9' || c == '+' || c == '-' || c == '.')) {
 			return nil, "", fmt.Errorf("invalid uri scheme")
 		}
 	}
