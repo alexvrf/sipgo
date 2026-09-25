@@ -17,6 +17,10 @@ type UserAgent struct {
 	tpOptions   []sip.TransportLayerOption
 	tp          *sip.TransportLayer
 	tx          *sip.TransactionLayer
+
+	// header gives the User-Agent / Server header value
+	// (WithUserAgentHeader); nil adds nothing.
+	header func() string
 }
 
 type UserAgentOption func(s *UserAgent) error
@@ -26,6 +30,29 @@ type UserAgentOption func(s *UserAgent) error
 func WithUserAgent(ua string) UserAgentOption {
 	return func(s *UserAgent) error {
 		s.name = ua
+		return nil
+	}
+}
+
+// WithUserAgentHeader sets the value of the User-Agent header field for
+// requests the user agent sends (RFC 3261 20.41) and of the Server header
+// field for its responses (RFC 3261 20.35). Both describe the software of the
+// UA, the first as a UAC and the second as a UAS, so one value serves both.
+//
+// It is applied where messages leave: the client's send paths, whatever
+// options built the request, and every response of a server transaction,
+// including those the transaction layer builds on its own (100 Trying, 487
+// and 200 on CANCEL). An ACK to a non-2xx response and a CANCEL copy the
+// value of their INVITE.
+//
+// The value is asked for on every message, so it may change at run time. An
+// empty value adds nothing, and a header the message already has is kept.
+// Both sections say implementers SHOULD make the header configurable, since
+// a software version helps an attacker; the UA name (WithUserAgent) is used
+// elsewhere and is not sent in these headers by default.
+func WithUserAgentHeader(value func() string) UserAgentOption {
+	return func(s *UserAgent) error {
+		s.header = value
 		return nil
 	}
 }
@@ -98,7 +125,12 @@ func NewUA(options ...UserAgentOption) (*UserAgent, error) {
 	}
 
 	ua.tp = sip.NewTransportLayer(ua.dnsResolver, ua.parser, ua.tlsConfig, ua.tpOptions...)
-	ua.tx = sip.NewTransactionLayer(ua.tp, ua.txOptions...)
+	txOptions := ua.txOptions
+	if ua.header != nil {
+		txOptions = append(txOptions[:len(txOptions):len(txOptions)],
+			sip.WithTransactionLayerServerHeader(ua.header))
+	}
+	ua.tx = sip.NewTransactionLayer(ua.tp, txOptions...)
 	return ua, nil
 }
 

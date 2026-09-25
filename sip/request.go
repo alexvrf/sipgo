@@ -254,6 +254,10 @@ func newAckRequestNon2xx(inviteRequest *Request, inviteResponse *Response, body 
 
 	maxForwardsHeader := MaxForwardsHeader(70)
 	ackRequest.AppendHeader(&maxForwardsHeader)
+	// The ACK is originated by the same UAC as the INVITE, so it describes
+	// the same software (RFC 3261 20.41). It is built here, inside the
+	// transaction, and the TU never gets a chance to add the header itself.
+	CopyHeaders("User-Agent", inviteRequest, ackRequest)
 	if h := inviteRequest.From(); h != nil {
 		ackRequest.AppendHeader(h.headerClone())
 	}
@@ -304,6 +308,8 @@ func newCancelRequest(requestForCancel *Request) *Request {
 	CopyHeaders("Route", requestForCancel, cancelReq)
 	maxForwardsHeader := MaxForwardsHeader(70)
 	cancelReq.AppendHeader(&maxForwardsHeader)
+	// Same UAC as the request being cancelled (RFC 3261 20.41).
+	CopyHeaders("User-Agent", requestForCancel, cancelReq)
 
 	if h := requestForCancel.From(); h != nil {
 		cancelReq.AppendHeader(h.headerClone())

@@ -302,6 +302,7 @@ func (tx *ServerTx) actCancel() fsmInput {
 
 	tx.log.Debug("Passing 487 on CANCEL", "tx", tx.Key())
 	tx.fsmResp = NewResponseFromRequest(tx.origin, StatusRequestTerminated, "Request Terminated", nil)
+	setServerHeader(tx.fsmResp, tx.serverHeader)
 	tx.fsmErr = ErrTransactionCanceled // For now only informative
 
 	// Check is there some listener on cancel

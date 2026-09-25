@@ -159,6 +159,7 @@ func (c *Client) TransactionRequest(ctx context.Context, req *sip.Request, optio
 		}
 	}
 
+	c.setUserAgentHeader(req)
 	if c.TxRequester != nil {
 		return c.TxRequester.Request(ctx, req)
 	}
@@ -185,6 +186,7 @@ func (c *Client) newTransaction(ctx context.Context, req *sip.Request, onConnect
 		}
 	}
 
+	c.setUserAgentHeader(req)
 	if c.TxRequester != nil {
 		return c.TxRequester.Request(ctx, req)
 	}
@@ -316,11 +318,26 @@ func (c *Client) WriteRequest(req *sip.Request, options ...ClientRequestOption) 
 }
 
 func (c *Client) writeReq(req *sip.Request) error {
+	c.setUserAgentHeader(req)
 	if c.TxRequester != nil {
 		_, err := c.TxRequester.Request(context.TODO(), req)
 		return err
 	}
 	return c.tp.WriteMsg(req)
+}
+
+// setUserAgentHeader adds the User-Agent header field (WithUserAgentHeader)
+// unless the request already has one. It runs on every send path rather than
+// in clientRequestBuildReq: passing ClientRequestOption replaces the default
+// build, and the header would then go missing from exactly the requests a
+// dialog sends within itself.
+func (c *Client) setUserAgentHeader(req *sip.Request) {
+	if c.UserAgent == nil || c.UserAgent.header == nil || req.GetHeader("User-Agent") != nil {
+		return
+	}
+	if v := c.UserAgent.header(); v != "" {
+		req.AppendHeader(sip.NewHeader("User-Agent", v))
+	}
 }
 
 type ClientRequestOption func(c *Client, req *sip.Request) error
