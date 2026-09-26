@@ -320,8 +320,15 @@ func (s *DialogServerSession) WriteResponse(res *sip.Response) error {
 	// https://datatracker.ietf.org/doc/html/rfc3261#section-13.3.1.4
 
 	// We are following RFC 6026, which states that this is TU thing and not Transaction layer.
-	timer := time.NewTimer(sip.T1)
+	//
+	// The interval doubles from T1 up to T2 (RFC 3261 13.3.1.4), and the
+	// 64*T1 limit is one timer for the whole wait: created inside the select,
+	// it would restart on every retransmission and never fire.
+	interval := sip.T1
+	timer := time.NewTimer(interval)
 	defer timer.Stop()
+	deadline := time.NewTimer(64 * sip.T1)
+	defer deadline.Stop()
 
 	state := sip.DialogStateEstablished
 	for state == sip.DialogStateEstablished {
@@ -334,14 +341,16 @@ func (s *DialogServerSession) WriteResponse(res *sip.Response) error {
 			//    interval that starts at T1 seconds and doubles for each
 			//    retransmission until it reaches T2 seconds (T1 and T2 are defined in
 			//    Section 17).
-			timer.Reset(max(2*sip.T1, sip.T2))
+			interval = min(2*interval, sip.T2)
+			timer.Reset(interval)
 
-		case <-time.After(64 * sip.T1):
+		case <-deadline.C:
 			// If the server retransmits the 2xx response for 64*T1 seconds without
 			// receiving an ACK, the dialog is confirmed, but the session SHOULD be
 			// terminated.  This is accomplished with a BYE, as described in Section
 			// 15.
-			state = sip.DialogStateConfirmed
+			s.setState(sip.DialogStateConfirmed)
+			return ErrDialogResponseNoACK
 		case state = <-readStateCh:
 		}
 	}
@@ -350,6 +359,11 @@ func (s *DialogServerSession) WriteResponse(res *sip.Response) error {
 	}
 	return nil
 }
+
+// ErrDialogResponseNoACK: the 2xx was retransmitted for 64*T1 without an
+// ACK. The dialog is confirmed, and the session SHOULD be terminated with a
+// BYE (RFC 3261 13.3.1.4) — the caller has to send it.
+var ErrDialogResponseNoACK = errors.New("dialog: no ACK for 2xx within 64*T1")
 
 func (s *DialogServerSession) Bye(ctx context.Context) error {
 	req := s.Dialog.InviteRequest
