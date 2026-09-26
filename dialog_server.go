@@ -144,9 +144,17 @@ func (s *DialogServerSession) buildReq(req *sip.Request) {
 		req.AppendHeader(sip.NewHeader("Route", recordRoute.Value()))
 	}
 
+	// A strict router at the top: RFC 3261 12.2.1.1 (applyStrictRoute),
+	// which also sends the request to it.
+	strict := false
+	if rr := req.Route(); rr != nil && !rr.Address.UriParams.Has("lr") {
+		applyStrictRoute(req)
+		strict = true
+	}
+
 	// Check Route Header
 	// Should be handled by transport layer but here we are making this explicit
-	if rr := req.Route(); rr != nil {
+	if rr := req.Route(); rr != nil && !strict {
 		req.SetDestination(rr.Address.HostPort())
 	}
 	// TODO check correct behavior strict routing vs loose routing

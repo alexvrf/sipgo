@@ -107,15 +107,17 @@ func TestDialogClientRequestRecordRouteHeaders(t *testing.T) {
 		ack := newAckRequestUAC(s.InviteRequest, s.InviteResponse, nil)
 		assert.Equal(t, "uas.p2.com:5060", ack.Destination())
 		s.WriteAck(ctx, ack)
+		// RFC 3261 12.2.1.1: the strict router leaves the Route list for the
+		// Request-URI, and the remote target goes last
 		assert.Equal(t, "sip:p1.com", ack.Recipient.String())
-		assert.Equal(t, "<sip:p1.com>", ack.Route().Value())
-		assert.Equal(t, "<sip:p2.com;lr>", ack.GetHeaders("Route")[1].Value())
+		assert.Equal(t, "<sip:p2.com;lr>", ack.Route().Value())
+		assert.Equal(t, "<sip:uas@uas.p2.com>", ack.GetHeaders("Route")[1].Value())
 
 		bye := newByeRequestUAC(s.InviteRequest, s.InviteResponse, nil)
 		s.Do(ctx, bye)
 		assert.Equal(t, "sip:p1.com", bye.Recipient.String())
-		assert.Equal(t, "<sip:p1.com>", bye.Route().Value())
-		assert.Equal(t, "<sip:p2.com;lr>", bye.GetHeaders("Route")[1].Value())
+		assert.Equal(t, "<sip:p2.com;lr>", bye.Route().Value())
+		assert.Equal(t, "<sip:uas@uas.p2.com>", bye.GetHeaders("Route")[1].Value())
 	})
 
 }

@@ -143,6 +143,16 @@ func (hs *headers) unref(header Header) {
 		hs.contentType = nil
 	case *MaxForwardsHeader:
 		hs.maxForwards = nil
+	default:
+		// A Route or Record-Route added as a generic header is parsed lazily
+		// into hs.route/hs.recordRoute (Route, RecordRoute); removing it must
+		// drop that cache too, or Route() keeps returning the removed value.
+		switch HeaderToLower(header.Name()) {
+		case "route":
+			hs.route = nil
+		case "record-route":
+			hs.recordRoute = nil
+		}
 	}
 }
 
