@@ -228,6 +228,15 @@ func NewResponseFromRequest(
 			host, port, _ := net.SplitHostPort(req.Source())
 			h.Params.Add("rport", port)
 			h.Params.Add("received", host)
+		} else if received, ok := viaReceived(h, req.MessageData.Source()); ok {
+			// RFC 3261 18.2.1: «If the host portion of the "sent-by" parameter
+			// contains a domain name, or if it contains an IP address that
+			// differs from the packet source address, the server MUST add a
+			// "received" parameter» — with or without rport.
+			if h.Params == nil {
+				h.Params = NewParams()
+			}
+			h.Params.Add("received", received)
 		}
 	}
 
@@ -304,4 +313,25 @@ func cloneResponse(res *Response) *Response {
 
 func CopyResponse(res *Response) *Response {
 	return cloneResponse(res)
+}
+
+// viaReceived returns the address for the "received" parameter of the top
+// Via (RFC 3261 18.2.1), or false when none is due: the request did not come
+// from the network, the parameter is there already, or sent-by is the very
+// IP address the packet came from.
+func viaReceived(via *ViaHeader, source string) (string, bool) {
+	if source == "" {
+		return "", false
+	}
+	if _, exists := via.Params.Get("received"); exists {
+		return "", false
+	}
+	host, _, err := net.SplitHostPort(source)
+	if err != nil {
+		return "", false
+	}
+	if sent := net.ParseIP(strings.Trim(via.Host, "[]")); sent != nil && sent.Equal(net.ParseIP(host)) {
+		return "", false
+	}
+	return host, true
 }
