@@ -287,12 +287,11 @@ func (s *DialogServerSession) WriteResponse(res *sip.Response) error {
 			return err
 		}
 
-		// We should wait ACK for cleaner exit
-		select {
-		case <-tx.Acks():
-		case <-tx.Done():
-			// This means tx moved to terminated state and no more invite retransmissions is accepted
-		}
+		// No wait for the ACK: for a non-2xx final response it "is absorbed
+		// by the server transaction" (RFC 3261 17.2.1), which also
+		// retransmits the response until then on its own. Waiting here held
+		// the caller up to Timer H (64*T1) whenever the UAC never
+		// acknowledged the rejection.
 		s.setState(sip.DialogStateEnded)
 		return nil
 	}
