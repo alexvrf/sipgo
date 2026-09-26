@@ -172,7 +172,18 @@ func (txl *TransactionLayer) handleRequest(req *Request) error {
 			// The CANCEL client transaction retransmits until it receives
 			// a response; sending 200 OK before the 487 ensures the UAC
 			// stops retransmitting immediately.
-			if err := tx.conn.WriteMsg(NewResponseFromRequest(req, StatusOK, "OK", nil)); err != nil {
+			ok := NewResponseFromRequest(req, StatusOK, "OK", nil)
+			// RFC 3261 9.2: «The To tag of the response to the CANCEL and the
+			// To tag in the response to the original request SHOULD be the
+			// same». The CANCEL carries no To tag, so NewResponseFromRequest
+			// made up a fresh one; the INVITE transaction knows the one it
+			// has answered with.
+			if tag := tx.sentToTag(); tag != "" {
+				if to := ok.To(); to != nil {
+					to.Params.Add("tag", tag)
+				}
+			}
+			if err := tx.conn.WriteMsg(ok); err != nil {
 				return fmt.Errorf("Failed to respond 200 for CANCEL: %w", err)
 			}
 
