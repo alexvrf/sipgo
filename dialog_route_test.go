@@ -42,3 +42,24 @@ func TestApplyStrictRouteLeavesLooseRoute(t *testing.T) {
 	require.Equal(t, "192.0.2.20", req.Recipient.Host)
 	require.Len(t, req.GetHeaders("Route"), 1)
 }
+
+// The route set may reach the request as one Route line with several
+// values — RFC 3261 7.3.1 allows combining them with commas, and a
+// Route header built by the application is not split by the parser.
+// Removing that line took the rest of the route set with it: RFC 3261
+// 12.2.1.1 requires «the remainder of the route set values in order».
+func TestApplyStrictRouteCombinedLine(t *testing.T) {
+	target := sip.Uri{Scheme: "sip", User: "bob", Host: "192.0.2.20", Port: 5070}
+	req := sip.NewRequest(sip.BYE, target)
+	req.AppendHeader(sip.NewHeader("Route",
+		"<sip:p1.example.com>, <sip:p2.example.com;lr>,<sip:p3.example.com;lr>"))
+
+	applyStrictRoute(req)
+
+	require.Equal(t, "p1.example.com", req.Recipient.Host)
+	routes := req.GetHeaders("Route")
+	require.Len(t, routes, 3)
+	require.Contains(t, routes[0].Value(), "p2.example.com")
+	require.Contains(t, routes[1].Value(), "p3.example.com")
+	require.Contains(t, routes[2].Value(), "sip:bob@192.0.2.20:5070")
+}

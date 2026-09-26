@@ -20,20 +20,32 @@ import (
 //
 // The request is sent to the new Request-URI: that is the strict router,
 // and the top Route now names the hop after it.
-func applyStrictRoute(req *sip.Request) {
-	first := req.Route()
-	if first == nil || first.Address.UriParams.Has("lr") {
-		return
+//
+// The route set is read value by value, not line by line: RFC 3261 7.3.1
+// allows several values in one Route line, and a line built by the
+// application is not split by the parser. Removing the first line would
+// then drop the remainder of the route set along with the strict router.
+//
+// It reports whether the request was rewritten, so the caller does not
+// decide by the top Route on its own: that one would miss a combined line.
+func applyStrictRoute(req *sip.Request) bool {
+	set := routeSet(req)
+	if len(set) == 0 || set[0].UriParams.Has("lr") {
+		return false
 	}
 	target := req.Recipient
-	next := first.Address.Clone()
+	next := set[0].Clone()
 	// 19.1.1: method and headers are not allowed in a Request-URI
 	if next.UriParams != nil {
 		next.UriParams.Remove("method")
 	}
 	next.Headers = nil
 	req.Recipient = *next
-	req.RemoveHeader("Route")
+	for req.RemoveHeader("Route") {
+	}
+	for _, hop := range set[1:] {
+		req.AppendHeader(&sip.RouteHeader{Address: hop})
+	}
 	req.AppendHeader(sip.NewHeader("Route", "<"+target.String()+">"))
 
 	port := next.Port
@@ -41,4 +53,26 @@ func applyStrictRoute(req *sip.Request) {
 		port = sip.DefaultPort(req.Transport())
 	}
 	req.SetDestination(fmt.Sprintf("%s:%d", next.Host, port))
+	return true
+}
+
+// routeSet returns the Route values of req in order, one per value.
+// A line that does not parse leaves the set as it is: rewriting a route
+// set we could not read would send the request somewhere else.
+func routeSet(req *sip.Request) []sip.Uri {
+	var set []sip.Uri
+	for _, h := range req.GetHeaders("Route") {
+		parsed, err := sip.HeadersParser(sip.DefaultHeadersParser()).ParseHeader(nil, []byte("Route: "+h.Value()))
+		if err != nil {
+			return nil
+		}
+		for _, p := range parsed {
+			route, ok := p.(*sip.RouteHeader)
+			if !ok {
+				return nil
+			}
+			set = append(set, route.Address)
+		}
+	}
+	return set
 }

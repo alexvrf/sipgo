@@ -146,11 +146,7 @@ func (s *DialogServerSession) buildReq(req *sip.Request) {
 
 	// A strict router at the top: RFC 3261 12.2.1.1 (applyStrictRoute),
 	// which also sends the request to it.
-	strict := false
-	if rr := req.Route(); rr != nil && !rr.Address.UriParams.Has("lr") {
-		applyStrictRoute(req)
-		strict = true
-	}
+	strict := applyStrictRoute(req)
 
 	// Check Route Header
 	// Should be handled by transport layer but here we are making this explicit
