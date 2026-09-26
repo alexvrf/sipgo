@@ -27,9 +27,11 @@ func TestDialogServerByeRequest(t *testing.T) {
 
 	invite, _, _ := createTestInvite(t, "sip:uas@uas.com", "udp", "uas.com:5090")
 	invite.AppendHeader(&sip.ContactHeader{Address: sip.Uri{Host: "uas", Port: 1234}})
-	invite.AppendHeader(&sip.RecordRouteHeader{Address: sip.Uri{Host: "P1", Port: 5060}})
-	invite.AppendHeader(&sip.RecordRouteHeader{Address: sip.Uri{Host: "P2", Port: 5060}})
-	invite.AppendHeader(&sip.RecordRouteHeader{Address: sip.Uri{Host: "P3", Port: 5060}})
+	// loose routers: without lr the first one is a strict router
+	// (RFC 3261 12.2.1.1, dialog_route_test.go)
+	invite.AppendHeader(&sip.RecordRouteHeader{Address: sip.Uri{Host: "P1", Port: 5060, UriParams: sip.HeaderParams{{K: "lr"}}}})
+	invite.AppendHeader(&sip.RecordRouteHeader{Address: sip.Uri{Host: "P2", Port: 5060, UriParams: sip.HeaderParams{{K: "lr"}}}})
+	invite.AppendHeader(&sip.RecordRouteHeader{Address: sip.Uri{Host: "P3", Port: 5060, UriParams: sip.HeaderParams{{K: "lr"}}}})
 
 	dialog, err := dialogSrv.ReadInvite(invite, sip.NewServerTx("test", invite, nil, slog.Default()))
 	require.NoError(t, err)
@@ -45,9 +47,9 @@ func TestDialogServerByeRequest(t *testing.T) {
 	require.Equal(t, invite.CallID(), bye.CallID())
 
 	routes := bye.GetHeaders("Route")
-	assert.Equal(t, "<sip:P1:5060>", routes[0].Value())
-	assert.Equal(t, "<sip:P2:5060>", routes[1].Value())
-	assert.Equal(t, "<sip:P3:5060>", routes[2].Value())
+	assert.Equal(t, "<sip:P1:5060;lr>", routes[0].Value())
+	assert.Equal(t, "<sip:P2:5060;lr>", routes[1].Value())
+	assert.Equal(t, "<sip:P3:5060;lr>", routes[2].Value())
 }
 
 func TestDialogServerTransactionCanceled(t *testing.T) {

@@ -146,12 +146,8 @@ func (s *DialogClientSession) buildReq(req *sip.Request) {
 				req.AppendHeader(sip.NewHeader("Route", recordRoute.Value()))
 			}
 
-			// Now check top most route header with lazy header parsing
-			rh := req.Route()
-			if !rh.Address.UriParams.Has("lr") {
-				// this is strict routing
-				req.Recipient = rh.Address
-			}
+			// A strict router at the top: RFC 3261 12.2.1.1 (applyStrictRoute).
+			applyStrictRoute(req)
 		} else if s.UA.RewriteContact {
 			req.SetDestination(s.InviteResponse.Source())
 		}
