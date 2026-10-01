@@ -86,24 +86,38 @@ func addressStateDisplayName(a *nameAddress, s string) (addressFSM, string, erro
 //
 // Outside quotes RFC 3261 25.1 allows only *(token LWS), yet names with
 // other characters are common on the wire. RFC 4475 3.1.2.15 lets an
-// element infer the missing quotes, provided it does not propagate the
-// error. DisplayName keeps the quoted-string content as is, escapes
-// included, and the name is built back inside quotes. So a character that
-// quoted-string does not take literally must be escaped here as a
-// quoted-pair: otherwise "\" escapes the closing quote, and the header
-// built from the parsed one does not parse.
+// element "attempt to be liberal in what it receives and infer the missing
+// quotes", and adds: "If this element were a proxy, it must not propagate
+// the error into the request it forwards". We hold every element to that,
+// a UAS repeating To in its responses included. DisplayName keeps the
+// quoted-string content as is, escapes included, and the name is built
+// back inside quotes. So a character that quoted-string does not take
+// literally must be escaped here as a quoted-pair: otherwise "\" escapes
+// the closing quote, and the header built from the parsed one does not
+// parse.
+//
+// The name is walked byte by byte: every character to escape is ASCII,
+// and no byte of a multi-byte UTF-8 sequence is below 0x80, so bytes that
+// are not valid UTF-8 are kept as they came instead of turning into
+// U+FFFD.
 func inferQuotes(name string) string {
-	if !strings.ContainsFunc(name, needsQuotedPair) {
+	n := 0
+	for i := 0; i < len(name); i++ {
+		if needsQuotedPair(name[i]) {
+			n++
+		}
+	}
+	if n == 0 {
 		return name
 	}
-	var b strings.Builder
-	for _, c := range name {
-		if needsQuotedPair(c) {
-			b.WriteByte('\\')
+	b := make([]byte, 0, len(name)+n)
+	for i := 0; i < len(name); i++ {
+		if needsQuotedPair(name[i]) {
+			b = append(b, '\\')
 		}
-		b.WriteRune(c)
+		b = append(b, name[i])
 	}
-	return b.String()
+	return string(b)
 }
 
 // needsQuotedPair reports whether c is outside qdtext and must be written
@@ -111,7 +125,7 @@ func inferQuotes(name string) string {
 //
 //	qdtext      = LWS / %x21 / %x23-5B / %x5D-7E / UTF8-NONASCII
 //	quoted-pair = "\" (%x00-09 / %x0B-0C / %x0E-7F)
-func needsQuotedPair(c rune) bool {
+func needsQuotedPair(c byte) bool {
 	return c == '\\' || c == '"' || c < 0x20 && c != '\t' || c == 0x7f
 }
 

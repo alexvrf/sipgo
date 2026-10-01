@@ -124,8 +124,10 @@ func BenchmarkParseAddress(b *testing.B) {
 	}
 }
 
-// Quotes inferred for an unquoted display name (RFC 4475 3.1.2.15) must
-// not propagate the error: the name is built back inside quotes, so a
+// Quotes inferred for an unquoted display name (RFC 4475 3.1.2.15: "it
+// must not propagate the error into the request it forwards" — said of a
+// proxy, held here for every element) leave nothing malformed behind: the
+// name is built back inside quotes, so a
 // character that quoted-string does not take literally is escaped as a
 // quoted-pair (RFC 3261 25.1). "\\" was kept as is and escaped the closing
 // quote of the built header: `To: \\ <sip:a@b>` became `To: "\\" <sip:a@b>`,
@@ -135,6 +137,10 @@ func TestParseAddressValueInfersQuotes(t *testing.T) {
 		{`\ <sip:a@b>`, `\\`, `"\\" <sip:a@b>`},
 		{"a\x01b <sip:a@b>", "a\\\x01b", "\"a\\\x01b\" <sip:a@b>"},
 		{`Bell, Alexander <sip:a@b>`, `Bell, Alexander`, `"Bell, Alexander" <sip:a@b>`},
+		// bytes that are not UTF-8 stay as they came, with or without
+		// something to escape next to them
+		{"a\xffb <sip:a@b>", "a\xffb", "\"a\xffb\" <sip:a@b>"},
+		{"a\xff\\b <sip:a@b>", "a\xff\\\\b", "\"a\xff\\\\b\" <sip:a@b>"},
 		// quoted names keep their escapes: nothing is inferred
 		{`"a\"b\\" <sip:a@b>`, `a\"b\\`, `"a\"b\\" <sip:a@b>`},
 	} {
