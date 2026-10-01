@@ -281,6 +281,14 @@ func (tx *baseTx) spinFsmWithError(in fsmInput, err error) {
 	tx.fsmMu.Unlock()
 }
 
+// isClosed reports whether the transaction is already deleted. Takes mu,
+// never fsmMu: Terminate asks it before fsmMu.
+func (tx *baseTx) isClosed() bool {
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	return tx.closed
+}
+
 func (tx *baseTx) Err() error {
 	tx.fsmMu.Lock()
 	err := tx.fsmErr

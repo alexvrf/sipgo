@@ -158,11 +158,13 @@ func (tx *ServerTx) ackSendAsync(r *Request) {
 func (tx *ServerTx) Terminate() {
 	tx.log.Debug("Server transaction terminating", "tx", tx.Key())
 	// The error is set before delete closes done, as in ClientTx.Terminate:
-	// a waiter on Done() must not read a nil Err().
+	// a waiter on Done() must not read a nil Err(). A closed transaction
+	// returns before fsmMu, so handlers on the FSM path may call Terminate.
+	if tx.isClosed() {
+		return
+	}
 	tx.fsmMu.Lock()
-	tx.mu.Lock()
-	closed := tx.closed
-	tx.mu.Unlock()
+	closed := tx.isClosed()
 	if !closed {
 		tx.fsmErr = ErrTransactionTerminated
 	}
