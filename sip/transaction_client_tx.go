@@ -123,10 +123,20 @@ func (tx *ClientTx) Terminate() {
 	// default:
 	// }
 
-	if tx.delete(ErrTransactionTerminated) {
-		tx.fsmMu.Lock()
+	// The error is set before delete closes done: whoever waits on Done()
+	// reads Err() right away and must not see nil — Client.Do and
+	// DialogClientSession.Do would return (nil, nil) then. delete is not
+	// called under fsmMu: termination callbacks may read Err().
+	tx.fsmMu.Lock()
+	tx.mu.Lock()
+	closed := tx.closed
+	tx.mu.Unlock()
+	if !closed {
 		tx.fsmErr = ErrTransactionCanceled
-		tx.fsmMu.Unlock()
+	}
+	tx.fsmMu.Unlock()
+	if !closed {
+		tx.delete(ErrTransactionTerminated)
 	}
 }
 

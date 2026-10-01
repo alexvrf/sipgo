@@ -157,11 +157,18 @@ func (tx *ServerTx) ackSendAsync(r *Request) {
 
 func (tx *ServerTx) Terminate() {
 	tx.log.Debug("Server transaction terminating", "tx", tx.Key())
-	if tx.delete(ErrTransactionTerminated) {
-		// TODO: remove this double locking
-		tx.fsmMu.Lock()
+	// The error is set before delete closes done, as in ClientTx.Terminate:
+	// a waiter on Done() must not read a nil Err().
+	tx.fsmMu.Lock()
+	tx.mu.Lock()
+	closed := tx.closed
+	tx.mu.Unlock()
+	if !closed {
 		tx.fsmErr = ErrTransactionTerminated
-		tx.fsmMu.Unlock()
+	}
+	tx.fsmMu.Unlock()
+	if !closed {
+		tx.delete(ErrTransactionTerminated)
 	}
 }
 
