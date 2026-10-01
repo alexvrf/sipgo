@@ -116,3 +116,55 @@ func TestTerminateFromFSMHandlerReturns(t *testing.T) {
 		reenter(t, tx, func() { _ = tx.Respond(NewResponseFromRequest(req, StatusOK, "OK", nil)) })
 	})
 }
+
+// Terminate does not wait for fsmMu. The FSM holds fsmMu while it passes a
+// response up (fsmPassUp), and it is released either by a reader of
+// Responses() or by Done. A caller that stops reading and terminates — as
+// DialogClientSession.inviteCancel does when its 64*T1 wait for 487 ends at
+// the moment 487 arrives (RFC 3261 9.1) — used to block on fsmMu while the
+// FSM blocked on it: neither ever returned, and Engine.Close hung in
+// TransactionLayer.Close behind them. Seen once in the engine tests
+// (TestCallerCancelStopsCallee, ten minutes to the test timeout); here the
+// FSM is held in fsmPassUp deterministically by not reading Responses().
+func TestTerminateWhileFSMPassesUpReturns(t *testing.T) {
+	conn := &UDPConnection{PacketConn: &fakes.UDPConn{
+		Reader:  bytes.NewBuffer(nil),
+		Writers: map[string]io.Writer{"127.0.0.2:5060": io.Discard, "127.0.0.99:5060": io.Discard},
+	}, refcount: 1}
+	req, _, _ := testCreateInvite(t, "sip:127.0.0.99:5060", "udp", "127.0.0.2:5060")
+	tx := NewClientTx("passup", req, conn, slog.Default())
+	require.NoError(t, tx.Init())
+
+	received := make(chan struct{})
+	go func() {
+		tx.Receive(NewResponseFromRequest(req, StatusRequestTerminated, "Request Terminated", nil))
+		close(received)
+	}()
+	// the FSM is inside fsmPassUp once it holds fsmMu: nobody reads
+	// Responses(), so it stays there until Done
+	deadline := time.Now().Add(3 * time.Second)
+	for tx.fsmMu.TryLock() {
+		tx.fsmMu.Unlock()
+		if time.Now().After(deadline) {
+			t.Fatal("the FSM never took fsmMu")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	terminated := make(chan struct{})
+	go func() {
+		tx.Terminate()
+		close(terminated)
+	}()
+	select {
+	case <-terminated:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Terminate blocked on fsmMu held by the FSM passing a response up")
+	}
+	select {
+	case <-received:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the FSM was not released by Done")
+	}
+	require.Error(t, tx.Err())
+}
