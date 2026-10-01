@@ -123,10 +123,21 @@ func (tx *ClientTx) Terminate() {
 	// default:
 	// }
 
-	if tx.delete(ErrTransactionTerminated) {
-		tx.fsmMu.Lock()
-		tx.fsmErr = ErrTransactionCanceled
-		tx.fsmMu.Unlock()
+	// The error is set before delete closes done: whoever waits on Done()
+	// reads Err() right away and must not see nil — Client.Do and
+	// DialogClientSession.Do would return (nil, nil) then.
+	//
+	// It is set under mu, not fsmMu: Terminate never waits for the FSM. The
+	// FSM holds fsmMu while it passes a response up (fsmPassUp) and is
+	// released by a reader or by done — a caller that stopped reading and
+	// terminates would wait for fsmMu forever, and the FSM for done.
+	// Handlers on the FSM path run under fsmMu and may call Terminate on
+	// their own transaction for the same reason. delete is called outside
+	// fsmMu, so callbacks of this path may read Err(); on the FSM path they
+	// run under fsmMu and must not (dialog_ua.go: "do not call any here tx
+	// FSM related functions").
+	if tx.setTermErr(ErrTransactionCanceled) {
+		tx.delete(ErrTransactionTerminated)
 	}
 }
 

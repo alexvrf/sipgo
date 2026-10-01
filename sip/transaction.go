@@ -171,6 +171,11 @@ type baseTx struct {
 	fsmAck    *Request
 	fsmCancel *Request
 
+	// termErr — the cause set by Terminate, under mu: Terminate does not
+	// take fsmMu (see ClientTx.Terminate). Err prefers fsmErr: an FSM that
+	// deleted the transaction first set its own cause before doing so.
+	termErr error
+
 	log         *slog.Logger
 	onTerminate FnTxTerminate
 }
@@ -281,11 +286,39 @@ func (tx *baseTx) spinFsmWithError(in fsmInput, err error) {
 	tx.fsmMu.Unlock()
 }
 
+// isClosed reports whether the transaction is already deleted. Takes mu,
+// never fsmMu.
+func (tx *baseTx) isClosed() bool {
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	return tx.closed
+}
+
+// setTermErr records the cause of Terminate unless the transaction is
+// already deleted, and reports whether the caller is to delete it. Takes mu,
+// never fsmMu.
+func (tx *baseTx) setTermErr(err error) bool {
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	if tx.closed {
+		return false
+	}
+	if tx.termErr == nil {
+		tx.termErr = err
+	}
+	return true
+}
+
 func (tx *baseTx) Err() error {
 	tx.fsmMu.Lock()
 	err := tx.fsmErr
 	tx.fsmMu.Unlock()
-	return err
+	if err != nil {
+		return err
+	}
+	tx.mu.Lock()
+	defer tx.mu.Unlock()
+	return tx.termErr
 }
 
 type FnTxTerminate func(key string, err error)
