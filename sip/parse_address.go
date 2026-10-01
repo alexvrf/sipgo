@@ -60,7 +60,13 @@ func addressStateDisplayName(a *nameAddress, s string) (addressFSM, string, erro
 		// and ">" are present, all parameters after the URI are header
 		// parameters, not URI parameters.
 		if c == '<' {
-			a.displayName = strings.TrimSpace(s[:i])
+			name := strings.TrimSpace(s[:i])
+			if strings.ContainsAny(name, "\r\n") {
+				// quoted-pair cannot carry CR or LF either: such a name
+				// cannot be written back at all
+				return nil, s, fmt.Errorf("invalid display name, CR or LF in %q", name)
+			}
+			a.displayName = inferQuotes(name)
 			return addressStateUriBracket, s[i+1:], nil
 		}
 
@@ -73,6 +79,54 @@ func addressStateDisplayName(a *nameAddress, s string) (addressFSM, string, erro
 
 	// No DisplayName found
 	return addressStateUri, s, nil
+}
+
+// inferQuotes turns an unquoted display name into the content of the
+// quoted-string it is written back as.
+//
+// Outside quotes RFC 3261 25.1 allows only *(token LWS), yet names with
+// other characters are common on the wire. RFC 4475 3.1.2.15 lets an
+// element "attempt to be liberal in what it receives and infer the missing
+// quotes", and adds: "If this element were a proxy, it must not propagate
+// the error into the request it forwards". We hold every element to that,
+// a UAS repeating To in its responses included. DisplayName keeps the
+// quoted-string content as is, escapes included, and the name is built
+// back inside quotes. So a character that quoted-string does not take
+// literally must be escaped here as a quoted-pair: otherwise "\" escapes
+// the closing quote, and the header built from the parsed one does not
+// parse.
+//
+// The name is walked byte by byte: every character to escape is ASCII,
+// and no byte of a multi-byte UTF-8 sequence is below 0x80, so bytes that
+// are not valid UTF-8 are kept as they came instead of turning into
+// U+FFFD.
+func inferQuotes(name string) string {
+	n := 0
+	for i := 0; i < len(name); i++ {
+		if needsQuotedPair(name[i]) {
+			n++
+		}
+	}
+	if n == 0 {
+		return name
+	}
+	b := make([]byte, 0, len(name)+n)
+	for i := 0; i < len(name); i++ {
+		if needsQuotedPair(name[i]) {
+			b = append(b, '\\')
+		}
+		b = append(b, name[i])
+	}
+	return string(b)
+}
+
+// needsQuotedPair reports whether c is outside qdtext and must be written
+// as a quoted-pair inside a quoted-string (RFC 3261 25.1):
+//
+//	qdtext      = LWS / %x21 / %x23-5B / %x5D-7E / UTF8-NONASCII
+//	quoted-pair = "\" (%x00-09 / %x0B-0C / %x0E-7F)
+func needsQuotedPair(c byte) bool {
+	return c == '\\' || c == '"' || c < 0x20 && c != '\t' || c == 0x7f
 }
 
 func addressStateDisplayNameQuoted(a *nameAddress, s string) (addressFSM, string, error) {

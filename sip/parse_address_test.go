@@ -123,3 +123,36 @@ func BenchmarkParseAddress(b *testing.B) {
 		assert.Equal(b, "Bob", displayName)
 	}
 }
+
+// Quotes inferred for an unquoted display name (RFC 4475 3.1.2.15: "it
+// must not propagate the error into the request it forwards" — said of a
+// proxy, held here for every element) leave nothing malformed behind: the
+// name is built back inside quotes, so a
+// character that quoted-string does not take literally is escaped as a
+// quoted-pair (RFC 3261 25.1). "\\" was kept as is and escaped the closing
+// quote of the built header: `To: \\ <sip:a@b>` became `To: "\\" <sip:a@b>`,
+// which our own parser rejects (found by FuzzParseAndBuild).
+func TestParseAddressValueInfersQuotes(t *testing.T) {
+	for _, c := range []struct{ value, name, built string }{
+		{`\ <sip:a@b>`, `\\`, `"\\" <sip:a@b>`},
+		{"a\x01b <sip:a@b>", "a\\\x01b", "\"a\\\x01b\" <sip:a@b>"},
+		{`Bell, Alexander <sip:a@b>`, `Bell, Alexander`, `"Bell, Alexander" <sip:a@b>`},
+		// bytes that are not UTF-8 stay as they came, with or without
+		// something to escape next to them
+		{"a\xffb <sip:a@b>", "a\xffb", "\"a\xffb\" <sip:a@b>"},
+		{"a\xff\\b <sip:a@b>", "a\xff\\\\b", "\"a\xff\\\\b\" <sip:a@b>"},
+		// quoted names keep their escapes: nothing is inferred
+		{`"a\"b\\" <sip:a@b>`, `a\"b\\`, `"a\"b\\" <sip:a@b>`},
+	} {
+		h := &ToHeader{}
+		require.NoError(t, parseToHeader(c.value, h), "%q", c.value)
+		require.Equal(t, c.name, h.DisplayName, "%q", c.value)
+		require.Equal(t, c.built, h.Value(), "%q", c.value)
+
+		back := &ToHeader{}
+		require.NoError(t, parseToHeader(h.Value(), back), "built %q", h.Value())
+		require.Equal(t, h.DisplayName, back.DisplayName, "built %q", h.Value())
+	}
+	// CR and LF cannot be a quoted-pair either: no way to write it back
+	require.Error(t, parseToHeader("a\nb <sip:a@b>", &ToHeader{}))
+}
