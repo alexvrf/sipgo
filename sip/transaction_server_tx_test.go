@@ -111,7 +111,11 @@ func TestServerTransactionNonInviteFSM(t *testing.T) {
 		// passing 200 response
 		err = tx.Respond(NewResponseFromRequest(req, 200, "OK", nil))
 		require.NoError(t, err)
-		require.NoError(t, compareFunctions(tx.currentFsmState(), tx.stateCompleted))
+		// Completed, or already Terminated: Timer J is zero over a reliable
+		// transport and fires from its own goroutine
+		if st := tx.currentFsmState(); compareFunctions(st, tx.stateTerminated) != nil {
+			require.NoError(t, compareFunctions(st, tx.stateCompleted))
+		}
 
 		// timer J should be zero
 		require.Zero(t, tx.timer_j_time)

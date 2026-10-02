@@ -122,9 +122,9 @@ func (tx *ServerTx) Respond(res *Response) error {
 	default:
 		input = server_input_user_300_plus
 	}
-	tx.spinFsmWithResponse(input, res)
-	// In case of termination or some error
-	return tx.Err()
+	// In case of termination or some error — of this response, not of what
+	// a timer did after it (spinFsmWithResponse)
+	return tx.spinFsmWithResponse(input, res)
 }
 
 // Acks makes channel for sending acks. Channel is created on demand
