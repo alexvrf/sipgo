@@ -254,11 +254,18 @@ func (tx *baseTx) spinFsm(in fsmInput) {
 	tx.fsmMu.Unlock()
 }
 
-func (tx *baseTx) spinFsmWithResponse(in fsmInput, resp *Response) {
+// spinFsmWithResponse returns the FSM error as it stands right after this
+// spin, read under the same fsmMu. Read after the unlock it could already
+// be the work of another input — over a reliable transport Timer J is zero
+// and deletes the transaction from its own goroutine (RFC 3261 17.2.2), so
+// ServerTx.Respond reported a sent response as "transaction terminated".
+func (tx *baseTx) spinFsmWithResponse(in fsmInput, resp *Response) error {
 	tx.fsmMu.Lock()
 	tx.fsmResp = resp
 	tx.spinFsmUnsafe(in)
+	err := tx.fsmErr
 	tx.fsmMu.Unlock()
+	return err
 }
 
 func (tx *baseTx) spinFsmWithRequest(in fsmInput, req *Request) {
