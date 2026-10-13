@@ -76,8 +76,22 @@ func uriStateUser(uri *Uri, s string) (uriFSM, string, error) {
 			return uriStateHost, s[i:], nil
 		}
 
+		// userinfo = ( user / telephone-subscriber ) [ ":" password ] "@"
+		// (RFC 3261 25.1): neither user nor password may contain a colon,
+		// so the first one separates them and a second one is an error.
+		// Splitting at the last colon made "sip:0::@0" a user "0:" that
+		// was built back as "sip:0:@0" and then read as user "0": every
+		// parse-and-build lost a colon.
 		if c == ':' {
-			userend = i
+			if userend > 0 {
+				if strings.IndexByte(s[i:], '@') >= 0 {
+					return nil, "", fmt.Errorf("invalid ':' in uri password")
+				}
+				// no "@" follows: not userinfo but host and port, which
+				// uriStateHost parses
+			} else {
+				userend = i
+			}
 		}
 
 		if c == '@' {
