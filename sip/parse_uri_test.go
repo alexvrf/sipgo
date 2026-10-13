@@ -277,3 +277,48 @@ func TestParseUriIPV6(t *testing.T) {
 		assert.Equal(t, "user", uri.User)
 	})
 }
+
+// RFC 3261 25.1: neither user nor password contains a colon, so the first
+// colon separates them and a second one is rejected. A parse-and-build
+// round trip must be a fixed point.
+func TestParseUriUserinfoColon(t *testing.T) {
+	t.Run("password", func(t *testing.T) {
+		uri := Uri{}
+		require.NoError(t, ParseUri("sip:alice:secret@example.com:5060", &uri))
+		assert.Equal(t, "alice", uri.User)
+		assert.Equal(t, "secret", uri.Password)
+		assert.Equal(t, "example.com", uri.Host)
+		assert.Equal(t, 5060, uri.Port)
+	})
+
+	t.Run("empty password", func(t *testing.T) {
+		uri := Uri{}
+		require.NoError(t, ParseUri("sip:alice:@example.com", &uri))
+		assert.Equal(t, "alice", uri.User)
+		assert.Equal(t, "", uri.Password)
+	})
+
+	t.Run("host and port without userinfo", func(t *testing.T) {
+		uri := Uri{}
+		require.NoError(t, ParseUri("sip:example.com:5060", &uri))
+		assert.Equal(t, "example.com", uri.Host)
+		assert.Equal(t, 5060, uri.Port)
+	})
+
+	for _, s := range []string{"sip:alice:a:b@example.com", "sip:0::@0", "sip:0:::@0"} {
+		t.Run("rejected "+s, func(t *testing.T) {
+			uri := Uri{}
+			require.Error(t, ParseUri(s, &uri))
+		})
+	}
+
+	t.Run("round trip", func(t *testing.T) {
+		for _, s := range []string{"sip:alice:secret@example.com", "sip:alice:@example.com", "sip:0:@0"} {
+			first := Uri{}
+			require.NoError(t, ParseUri(s, &first))
+			second := Uri{}
+			require.NoError(t, ParseUri(first.String(), &second))
+			assert.Equal(t, first.String(), second.String(), s)
+		}
+	})
+}
