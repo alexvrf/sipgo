@@ -38,7 +38,17 @@ type connectionPool struct {
 	sync.RWMutex
 	m  map[string]Connection
 	sf singleflight.Group
+	// closed is set by Clear: the transport is closing, and a connection
+	// created after that would belong to nobody — no Clear is coming for
+	// it, its reader lives for the life of the process, and retransmits
+	// of the transaction that asked for it go out of a socket the
+	// application believes closed.
+	closed bool
 }
+
+// ErrTransportClosed is returned when a connection is requested from a
+// transport that has been closed.
+var ErrTransportClosed = errors.New("transport closed")
 
 func newConnectionPool() *connectionPool {
 	p := &connectionPool{}
@@ -52,6 +62,13 @@ func (p *connectionPool) init() {
 
 func (p *connectionPool) addSingleflight(raddr Addr, laddr Addr, reuse bool, do func() (Connection, error)) (Connection, error) {
 	a := raddr.String()
+
+	p.RLock()
+	closed := p.closed
+	p.RUnlock()
+	if closed {
+		return nil, ErrTransportClosed
+	}
 
 	if laddr.Port > 0 || reuse {
 		// TODO: implement singleflight without  type conversion
@@ -79,6 +96,11 @@ func (p *connectionPool) addSingleflight(raddr Addr, laddr Addr, reuse bool, do 
 			p.Lock()
 			defer p.Unlock()
 
+			if p.closed {
+				// Clear ran while the socket was being opened
+				c.Close()
+				return nil, ErrTransportClosed
+			}
 			p.m[a] = c
 			p.m[c.LocalAddr().String()] = c
 			return c, nil
@@ -100,6 +122,12 @@ func (p *connectionPool) addSingleflight(raddr Addr, laddr Addr, reuse bool, do 
 	if c.Ref(0) < 1 {
 		c.Ref(1) // Make 1 reference count by default
 	}
+	p.Lock()
+	defer p.Unlock()
+	if p.closed {
+		c.Close()
+		return nil, ErrTransportClosed
+	}
 	p.m[a] = c
 	p.m[c.LocalAddr().String()] = c
 	return c, nil
@@ -109,12 +137,21 @@ func (p *connectionPool) Add(a string, c Connection) {
 	// TODO how about multi connection support for same remote address
 	// We can then check ref count
 
+	p.Lock()
+	defer p.Unlock()
+	if p.closed {
+		// A connection accepted after Clear would sit in a pool nobody
+		// clears again. A UDP listener is re-added under each new sender
+		// by its reader; closing it stays the caller's business.
+		if u, ok := c.(*UDPConnection); !ok || !u.Listener {
+			c.Close()
+		}
+		return
+	}
 	if c.Ref(0) < 1 {
 		c.Ref(1) // Make 1 reference count by default
 	}
-	p.Lock()
 	p.m[a] = c
-	p.Unlock()
 }
 
 // Getting connection pool increases reference
@@ -174,6 +211,7 @@ func (p *connectionPool) DeleteMultiple(addrs []string) {
 func (p *connectionPool) Clear() error {
 	p.Lock()
 	defer p.Unlock()
+	p.closed = true
 
 	defer func() {
 		// Remove all
