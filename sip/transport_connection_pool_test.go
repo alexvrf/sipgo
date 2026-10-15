@@ -119,6 +119,30 @@ func TestClosedTransportOpensNoConnection(t *testing.T) {
 		}
 	}
 
+	// a connection accepted after Clear (TCP, WS: initConnection → Add)
+	// is closed and stays out of the pool
+	pool := newConnectionPool()
+	_ = pool.Clear()
+	accepted := newConn()
+	pool.Add("127.0.0.1:5060", accepted)
+	if accepted.closes.Load() != 1 || pool.Size() != 0 {
+		t.Errorf("accepted after Clear: closed %d times, pool size %d; want 1 and 0", accepted.closes.Load(), pool.Size())
+	}
+	// a UDP listener is re-added by its reader under each new sender; it
+	// stays out of the closed pool, but closing it is the caller's business
+	ln, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	pool.Add("127.0.0.1:5061", &UDPConnection{PacketConn: ln, PacketAddr: ln.LocalAddr().String(), Listener: true})
+	if pool.Size() != 0 {
+		t.Errorf("listener entered the closed pool")
+	}
+	if _, err := ln.WriteTo([]byte("x"), ln.LocalAddr()); err != nil {
+		t.Errorf("closed pool closed the caller's listener: %v", err)
+	}
+
 	// the same through the transport, with a real socket
 	tp := &TransportUDP{}
 	tp.init(NewParser())
