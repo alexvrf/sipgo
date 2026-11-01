@@ -65,9 +65,18 @@ func (tx *ClientTx) Init() error {
 	}
 
 	// Timer B - timeout
+	// RFC 3261 17.1.1.2 ends an INVITE client transaction by Timer B, and
+	// 17.1.2.2 a non-INVITE one by Timer F. Both are 64*T1 by default, but
+	// they are separate settings, and the error names the timer: a BYE or
+	// OPTIONS that timed out on "Timer_B" sends the reader to the INVITE
+	// state machine.
+	timeout, timer := Timer_B, "Timer_B"
+	if !tx.origin.IsInvite() {
+		timeout, timer = Timer_F, "Timer_F"
+	}
 	tx.mu.Lock()
-	tx.timer_b = time.AfterFunc(Timer_B, func() {
-		tx.spinFsmWithError(client_input_timer_b, fmt.Errorf("Timer_B timed out. %w", ErrTransactionTimeout))
+	tx.timer_b = time.AfterFunc(timeout, func() {
+		tx.spinFsmWithError(client_input_timer_b, fmt.Errorf("%s timed out. %w", timer, ErrTransactionTimeout))
 	})
 	tx.mu.Unlock()
 	tx.log.Debug("Client transaction initialized", "tx", tx.Key())
