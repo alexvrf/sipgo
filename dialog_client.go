@@ -402,19 +402,38 @@ func (s *DialogClientSession) WriteAck(ctx context.Context, ack *sip.Request) er
 	// request is passed to the transport layer directly for transmission,
 	// rather than a client transaction.  This is because the UAC core
 	// handles retransmissions of the ACK, not the transaction layer.
-	retransmissionAck := ack.Clone() // We need to clone for RACE safety
+	//
+	//	The ACK MUST be passed to the client transport every time a
+	//	retransmission of the 2xx final response that triggered the ACK
+	//	arrives.
+	//
+	// The ACK, not a new one: the copy for retransmissions is taken once the
+	// request is complete, Via included. Cloned before the write, it had no
+	// Via yet, and every retransmission got a branch of its own — a new
+	// request to a UAS that tells a retransmitted ACK from a new one by the
+	// message (sipp compares the whole text and aborts the call on the
+	// stranger). It crossed a 2xx retransmission whenever the first ACK left
+	// later than T1.
+	s.buildReq(ack)
+	if err := s.requestValidate(s.UA.Client, ack); err != nil {
+		return err
+	}
+	retransmissionAck := ack.Clone()
 	s.inviteTx.OnRetransmission(func(r *sip.Response) {
 		// Detect retransmission
 		if r.StatusCode != 200 {
 			return
 		}
 
-		if err := s.WriteRequest(retransmissionAck); err != nil {
+		// A copy per write: retransmissions are passed up outside the FSM
+		// lock and may overlap, and the write may still fill the request in
+		// (a TxRequester, the transport).
+		if err := s.UA.Client.WriteRequest(retransmissionAck.Clone(), s.requestValidate); err != nil {
 			s.endWithCause(fmt.Errorf("ACK retransmission failed: %w", err))
 		}
 	})
 
-	if err := s.WriteRequest(ack); err != nil {
+	if err := s.UA.Client.WriteRequest(ack, s.requestValidate); err != nil {
 		// Make sure we close our error
 		// s.Close()
 		return err
