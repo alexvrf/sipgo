@@ -306,11 +306,22 @@ func (s *DialogServerSession) WriteResponse(res *sip.Response) error {
 		return fmt.Errorf("ID do not match. Invite request has changed headers?")
 	}
 
-	s.setState(sip.DialogStateEstablished)
-
 	// Register dialog state read channel before transmitting 200 OK. This prevents a race
 	// condition where the ACK is received before we start waiting for it.
+	//
+	// It is registered before the state is set as well, and the wait below
+	// starts from the current state: an ACK read between setState and
+	// StateRead confirmed the dialog with nobody listening, and every later
+	// ACK leaves Confirmed as it is, so setState notifies nobody — the 2xx
+	// was retransmitted for 64*T1 and the session ended as unacknowledged
+	// (RFC 3261 13.3.1.4). A dialog an ACK already confirmed is not taken
+	// back to Established: that ACK acknowledged a 2xx to this INVITE (its
+	// CSeq is checked by ReadAck), which happens when the 2xx is sent again
+	// by a UA that took the dialog over from another one. The check and the
+	// write are one compare-and-swap (establish): an ACK read between a
+	// separate check and write would be overwritten back to Established.
 	readStateCh := s.StateRead()
+	s.establish()
 
 	if err := tx.Respond(res); err != nil {
 		return err
@@ -323,7 +334,7 @@ func (s *DialogServerSession) WriteResponse(res *sip.Response) error {
 	timer := time.NewTimer(sip.T1)
 	defer timer.Stop()
 
-	state := sip.DialogStateEstablished
+	state := s.LoadState()
 	for state == sip.DialogStateEstablished {
 		select {
 		case <-timer.C:
