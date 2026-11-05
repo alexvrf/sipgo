@@ -109,6 +109,29 @@ func (d *Dialog) setState(s sip.DialogState) {
 	}
 }
 
+// establish sets Established unless an ACK has confirmed the dialog
+// already. The check and the write are one compare-and-swap: with a load
+// followed by setState, an ACK read between the two was overwritten back to
+// Established, and the dialog waited for an ACK it had already consumed
+// (RFC 3261 13.3.1.4).
+func (d *Dialog) establish() {
+	s := int32(sip.DialogStateEstablished)
+	for {
+		old := d.state.Load()
+		if old == s || old == int32(sip.DialogStateConfirmed) {
+			return
+		}
+		if d.state.CompareAndSwap(old, s) {
+			break
+		}
+	}
+
+	if f := d.onStatePointer.Load(); f != nil {
+		cb := *f
+		cb(sip.DialogStateEstablished)
+	}
+}
+
 // endWithCause sets dialog state ended and place context cause error
 // Experimental
 func (d *Dialog) endWithCause(err error) {
