@@ -109,16 +109,19 @@ func (d *Dialog) setState(s sip.DialogState) {
 	}
 }
 
-// establish sets Established unless an ACK has confirmed the dialog
-// already. The check and the write are one compare-and-swap: with a load
-// followed by setState, an ACK read between the two was overwritten back to
+// establish sets Established unless the dialog is past it already. The
+// check and the write are one compare-and-swap: with a load followed by
+// setState, an ACK read between the two was overwritten back to
 // Established, and the dialog waited for an ACK it had already consumed
-// (RFC 3261 13.3.1.4).
+// (RFC 3261 13.3.1.4). The step only goes forward (RFC 3261 12): a dialog
+// confirmed by an ACK, or ended by CANCEL, BYE or its transaction dying
+// before the answer, is not taken back — an ended one would be Established
+// with its context cancelled, and the 2xx retransmitted for 64*T1.
 func (d *Dialog) establish() {
 	s := int32(sip.DialogStateEstablished)
 	for {
 		old := d.state.Load()
-		if old == s || old == int32(sip.DialogStateConfirmed) {
+		if old >= s {
 			return
 		}
 		if d.state.CompareAndSwap(old, s) {

@@ -125,6 +125,56 @@ func TestDialogEstablishKeepsConcurrentConfirm(t *testing.T) {
 	require.Zero(t, lost, "dialog taken back to Established after an ACK confirmed it, rounds of %d", rounds)
 }
 
+// Established only moves a dialog forward (RFC 3261 12): a dialog an ACK has confirmed or CANCEL, BYE or a dead
+// transaction has ended keeps its state, and no state callback runs.
+// Taken back from Ended, the dialog was Established with its context
+// cancelled, and WriteResponse retransmitted the 2xx for 64*T1 and then
+// marked the ended dialog Confirmed.
+func TestDialogEstablishNeverGoesBack(t *testing.T) {
+	for _, st := range []sip.DialogState{sip.DialogStateConfirmed, sip.DialogStateEnded} {
+		t.Run(st.String(), func(t *testing.T) {
+			d := Dialog{InviteRequest: sip.NewRequest(sip.INVITE, sip.Uri{Host: "uas"})}
+			d.InitWithState(st)
+			var called atomic.Int32
+			d.OnState(func(sip.DialogState) { called.Add(1) })
+			d.establish()
+			require.Equal(t, st, d.LoadState())
+			require.Zero(t, called.Load(), "state callback ran without a change of state")
+		})
+	}
+
+	t.Run("WriteResponse on an ended dialog", func(t *testing.T) {
+		ua, _ := NewUA()
+		defer ua.Close()
+		cli, _ := NewClient(ua)
+		dialogSrv := NewDialogServerCache(cli, sip.ContactHeader{
+			Address: sip.Uri{User: "test", Host: "127.0.0.200", Port: 5099},
+		})
+		invite, _, _ := createTestInvite(t, "sip:uas@127.0.0.1", "udp", "127.0.0.1:5090")
+		invite.AppendHeader(&sip.ContactHeader{Address: sip.Uri{Host: "uas", Port: 1234}})
+		key, err := sip.ServerTxKeyMake(invite)
+		require.NoError(t, err)
+		tx := sip.NewServerTx(key, invite, discardConn{}, slog.Default())
+		require.NoError(t, tx.Init())
+		t.Cleanup(tx.Terminate)
+		d, err := dialogSrv.ReadInvite(invite, tx)
+		require.NoError(t, err)
+		d.setState(sip.DialogStateEnded)
+
+		done := make(chan error, 1)
+		go func() {
+			done <- d.WriteResponse(sip.NewResponseFromRequest(d.InviteRequest, sip.StatusOK, "OK", nil))
+		}()
+		select {
+		case err := <-done:
+			require.Error(t, err, "an ended dialog has no ACK to wait for")
+		case <-time.After(time.Second):
+			t.Fatal("WriteResponse(200) waits for an ACK on a dialog that has ended")
+		}
+		require.Equal(t, sip.DialogStateEnded, d.LoadState())
+	})
+}
+
 // discardConn is a connection for a transaction whose messages nobody reads.
 type discardConn struct{}
 
