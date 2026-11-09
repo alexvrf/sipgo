@@ -456,6 +456,45 @@ func (l *TransportLayer) ClientRequestConnection(ctx context.Context, req *Reque
 	return c, nil
 }
 
+// ResponseAddr is where a response to req goes when the request came from
+// the network (req.Source() is set): the packet source address with the port
+// from the top Via — or the packet source port, when that Via carries an
+// empty rport (RFC 3261 18.2.2, RFC 3581 4). The transport resolves its own
+// responses with it (serverRequestConnection); a UA that rebuilds a server
+// transaction from a stored request, whose remote address was never
+// resolved, calls it to answer to the same place.
+func ResponseAddr(req *Request, network string) (Addr, error) {
+	// https://datatracker.ietf.org/doc/html/rfc3263#section-5
+	// 		for unreliable transport protocols, to the source
+	//    address of the request, and the port in the Via header field
+	sourceHost, sourcePort, err := ParseAddr(req.MessageData.Source())
+	if err != nil {
+		return Addr{}, err
+	}
+	_, viaPort := req.sourceViaHostPort()
+	// Use source address and via port
+	raddr := Addr{
+		IP:       net.ParseIP(sourceHost),
+		Port:     viaPort,
+		Hostname: sourceHost,
+	}
+
+	// https://datatracker.ietf.org/doc/html/rfc3581#section-4
+	// If rport is set then we must use sourcePort instead
+	if viaHop := req.Via(); viaHop != nil && viaHop.Params != nil {
+		if rport, ok := viaHop.Params.Get("rport"); ok && rport == "" {
+			raddr.Port = sourcePort
+		}
+	}
+
+	// Should never be case but for safety
+	if raddr.Port == 0 {
+		// Use default port for transport
+		raddr.Port = DefaultPort(network)
+	}
+	return raddr, nil
+}
+
 // serverRequestConnection implements serving connection when response needs to be returned
 // Based on: https://datatracker.ietf.org/doc/html/rfc3261#section-18.2.2
 //
@@ -489,34 +528,9 @@ func (l *TransportLayer) serverRequestConnection(ctx context.Context, req *Reque
 
 	viaHost, viaPort := req.sourceViaHostPort()
 	if sourceAddr != "" {
-		// https://datatracker.ietf.org/doc/html/rfc3263#section-5
-		// 		for unreliable transport protocols, to the source
-		//    address of the request, and the port in the Via header field
-
-		// Use source host and port
-		sourceHost, sourcePort, err := ParseAddr(sourceAddr)
+		raddr, err := ResponseAddr(req, network)
 		if err != nil {
 			return nil, err
-		}
-		// Use source address and via port
-		raddr := Addr{
-			IP:       net.ParseIP(sourceHost),
-			Port:     viaPort,
-			Hostname: sourceHost,
-		}
-
-		// https://datatracker.ietf.org/doc/html/rfc3581#section-4
-		// If rport is set then we must use sourcePort instead
-		if viaHop != nil && viaHop.Params != nil {
-			if rport, ok := viaHop.Params.Get("rport"); ok && rport == "" {
-				raddr.Port = sourcePort
-			}
-		}
-
-		// Should never be case but for safety
-		if raddr.Port == 0 {
-			// Use default port for transport
-			raddr.Port = DefaultPort(network)
 		}
 
 		/// Set request addr here which is used for response build and setting received and rport if needed
