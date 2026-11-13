@@ -242,11 +242,12 @@ func (s *DialogClientSession) WaitAnswer(ctx context.Context, opts AnswerOptions
 	var r *sip.Response
 	var err error
 	authAttempts := 0
-	for i := 0; ; i++ {
-		if i > 10 {
-			// Preventing some long loops
-			return fmt.Errorf("more than 10 responses received")
-		}
+	// No cap on the number of responses: a UAS may send as many provisional
+	// responses as it likes (RFC 3261 13.3.1.1), and in Proceeding every one of
+	// them MUST be passed up to the TU (17.1.1.2). Each iteration waits for a
+	// response or for ctx, so nothing spins; the one real retry loop, digest
+	// authentication, is bounded by maxAuthAttempts.
+	for {
 		select {
 		case r = <-tx.Responses():
 			s.InviteResponse = r

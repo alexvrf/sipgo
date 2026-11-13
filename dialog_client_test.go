@@ -162,13 +162,18 @@ func TestDialogClientMultiResponses(t *testing.T) {
 		d, err := dua.Invite(context.TODO(), sip.Uri{User: "test", Host: "localhost"}, nil)
 		require.NoError(t, err)
 		go func() {
-			// Receive more provisional
+			// Receive more provisional. There is no cap on them: a UAS may
+			// send as many as it likes (RFC 3261 13.3.1.1), and the wait ends
+			// with the final response, not with their count.
 			for i := 0; i < 10; i++ {
 				d.inviteTx.(*sip.ClientTx).Receive(sip.NewResponseFromRequest(d.InviteRequest, 100, "Trying", nil))
 			}
+			res := sip.NewResponseFromRequest(d.InviteRequest, 200, "OK", nil)
+			res.AppendHeader(sip.NewHeader("Contact", "<sip:uas@localhost>"))
+			d.inviteTx.(*sip.ClientTx).Receive(res)
 		}()
 		err = d.WaitAnswer(context.TODO(), AnswerOptions{})
-		require.Error(t, err)
+		require.NoError(t, err)
 	})
 	t.Run("ProxyAuthLoop", func(t *testing.T) {
 		var sentReq *sip.Request
